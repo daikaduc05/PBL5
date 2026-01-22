@@ -1,0 +1,12 @@
+# TensorFlow và TensorFlow Hub cho MoveNet model
+tensorflow>=2.10.0
+tensorflow-hub>=0.12.0
+
+# OpenCV cho xử lý video/ảnh
+opencv-python>=4.5.0
+
+# NumPy cho tính toán
+numpy>=1.21.0
+
+# Progress bar
+tqdm>=4.62.0
