@@ -1,51 +1,44 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'app_colors.dart';
 
 class AppTypography {
-  static const String fontFamily = 'Roboto'; // We can switch to Google Fonts like Inter or Orbitron later if desired
-
-  static const TextStyle h1 = TextStyle(
-    fontFamily: fontFamily,
+  static TextStyle get h1 => GoogleFonts.orbitron(
     fontSize: 32,
     fontWeight: FontWeight.bold,
     color: AppColors.textPrimary,
     letterSpacing: 1.2,
   );
 
-  static const TextStyle h2 = TextStyle(
-    fontFamily: fontFamily,
+  static TextStyle get h2 => GoogleFonts.orbitron(
     fontSize: 24,
     fontWeight: FontWeight.w600,
     color: AppColors.textPrimary,
     letterSpacing: 1.0,
   );
 
-  static const TextStyle h3 = TextStyle(
-    fontFamily: fontFamily,
+  static TextStyle get h3 => GoogleFonts.orbitron(
     fontSize: 18,
     fontWeight: FontWeight.w600,
     color: AppColors.textPrimary,
   );
 
-  static const TextStyle bodyLarge = TextStyle(
-    fontFamily: fontFamily,
-    fontSize: 16,
-    fontWeight: FontWeight.normal,
+  static TextStyle get bodyLarge => GoogleFonts.rajdhani(
+    fontSize: 18,
+    fontWeight: FontWeight.w500,
     color: AppColors.textPrimary,
   );
 
-  static const TextStyle bodyMedium = TextStyle(
-    fontFamily: fontFamily,
-    fontSize: 14,
-    fontWeight: FontWeight.normal,
+  static TextStyle get bodyMedium => GoogleFonts.rajdhani(
+    fontSize: 16,
+    fontWeight: FontWeight.w500,
     color: AppColors.textSecondary,
   );
 
-  static const TextStyle buttonText = TextStyle(
-    fontFamily: fontFamily,
+  static TextStyle get buttonText => GoogleFonts.orbitron(
     fontSize: 16,
-    fontWeight: FontWeight.w600,
+    fontWeight: FontWeight.bold,
     color: AppColors.background,
-    letterSpacing: 1.0,
+    letterSpacing: 1.5,
   );
 }

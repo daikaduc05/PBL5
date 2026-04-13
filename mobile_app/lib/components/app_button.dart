@@ -21,8 +21,7 @@ class AppButton extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        gradient: isSecondary ? null : AppColors.primaryGradient,
-        color: isSecondary ? AppColors.surface : null,
+        color: isSecondary ? AppColors.surface : AppColors.primary,
         boxShadow: isSecondary
             ? []
             : [

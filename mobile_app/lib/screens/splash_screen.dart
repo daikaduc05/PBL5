@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'dart:async';
 import '../theme/app_colors.dart';
 import '../theme/app_typography.dart';
 import '../navigation/app_routes.dart';
+import '../components/app_button.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -40,10 +40,8 @@ class _SplashScreenState extends State<SplashScreen>
 
     _controller.forward();
 
-    // Navigate to Home after delay
-    Timer(const Duration(seconds: 3), () {
-      Navigator.of(context).pushReplacementNamed(AppRoutes.home);
-    });
+    // Optional: Keep the loading animation for visual effect, 
+    // but do not navigate automatically. Let the user press the Start button.
   }
 
   @override
@@ -216,6 +214,25 @@ class _SplashScreenState extends State<SplashScreen>
                           ),
                         ),
                       ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 32),
+                // Only show Start Button after loading reaches 100% (or always show it but make it look nice)
+                AnimatedBuilder(
+                  animation: _progressAnimation,
+                  builder: (context, child) {
+                    return AnimatedOpacity(
+                      opacity: _progressAnimation.value == 1.0 ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 500),
+                      child: _progressAnimation.value == 1.0 
+                        ? AppButton(
+                            text: 'Start Journey',
+                            onPressed: () {
+                              Navigator.of(context).pushReplacementNamed(AppRoutes.home);
+                            },
+                          )
+                        : const SizedBox(height: 56), // Placeholder height so layout doesn't jump
                     );
                   },
                 ),
