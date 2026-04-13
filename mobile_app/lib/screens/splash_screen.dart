@@ -1,3 +1,5 @@
+import 'dart:ui' show lerpDouble;
+
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_typography.dart';
@@ -12,10 +14,13 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _progressAnimation;
-  late Animation<double> _glowAnimation;
+    with TickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final AnimationController _scanController;
+  late final Animation<double> _progressAnimation;
+  late final Animation<double> _glowAnimation;
+  late final Animation<double> _scanAnimation;
+  late final Animation<double> _scanPulseAnimation;
 
   @override
   void initState() {
@@ -23,13 +28,14 @@ class _SplashScreenState extends State<SplashScreen>
 
     // Animations for progress bar and glow
     _controller = AnimationController(
-       vsync: this,
-       duration: const Duration(seconds: 3),
+      vsync: this,
+      duration: const Duration(seconds: 6),
     );
 
-    _progressAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
+    _progressAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
 
     _glowAnimation = Tween<double>(begin: 0.5, end: 1.0).animate(
       CurvedAnimation(
@@ -38,15 +44,46 @@ class _SplashScreenState extends State<SplashScreen>
       ),
     );
 
-    _controller.forward();
+    _scanController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 4500),
+    );
 
-    // Optional: Keep the loading animation for visual effect, 
+    _scanAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _scanController,
+        curve: const Interval(0.0, 1.0, curve: Curves.easeInOutCubic),
+      ),
+    );
+
+    _scanPulseAnimation = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween<double>(
+          begin: 0.75,
+          end: 1.0,
+        ).chain(CurveTween(curve: Curves.easeOut)),
+        weight: 45,
+      ),
+      TweenSequenceItem(
+        tween: Tween<double>(
+          begin: 1.0,
+          end: 0.85,
+        ).chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 55,
+      ),
+    ]).animate(_scanController);
+
+    _controller.forward();
+    _scanController.repeat();
+
+    // Optional: Keep the loading animation for visual effect,
     // but do not navigate automatically. Let the user press the Start button.
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _scanController.dispose();
     super.dispose();
   }
 
@@ -57,12 +94,8 @@ class _SplashScreenState extends State<SplashScreen>
       body: Stack(
         children: [
           // Subtle Grid Background
-          Positioned.fill(
-            child: CustomPaint(
-              painter: GridPainter(),
-            ),
-          ),
-          
+          Positioned.fill(child: CustomPaint(painter: const GridPainter())),
+
           // Center Content
           Center(
             child: Column(
@@ -80,14 +113,18 @@ class _SplashScreenState extends State<SplashScreen>
                         borderRadius: BorderRadius.circular(30),
                         gradient: RadialGradient(
                           colors: [
-                            AppColors.primary.withValues(alpha: 0.2 * _glowAnimation.value),
-                            Colors.transparent
+                            AppColors.primary.withValues(
+                              alpha: 0.2 * _glowAnimation.value,
+                            ),
+                            Colors.transparent,
                           ],
                           radius: 0.8,
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: AppColors.primary.withValues(alpha: 0.3 * _glowAnimation.value),
+                            color: AppColors.primary.withValues(
+                              alpha: 0.3 * _glowAnimation.value,
+                            ),
                             blurRadius: 40,
                             spreadRadius: 10,
                           ),
@@ -112,9 +149,9 @@ class _SplashScreenState extends State<SplashScreen>
                     ),
                   ),
                 ),
-                
+
                 const SizedBox(height: 32),
-                
+
                 // App Title
                 RichText(
                   text: TextSpan(
@@ -137,9 +174,9 @@ class _SplashScreenState extends State<SplashScreen>
                     ],
                   ),
                 ),
-                
+
                 const SizedBox(height: 8),
-                
+
                 // Subtitle
                 Text(
                   'PRECISION AI MOTION ANALYSIS',
@@ -150,6 +187,24 @@ class _SplashScreenState extends State<SplashScreen>
                   ),
                 ),
               ],
+            ),
+          ),
+
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AnimatedBuilder(
+                animation: _scanController,
+                builder: (context, child) {
+                  return SizedBox.expand(
+                    child: CustomPaint(
+                      painter: ScanOverlayPainter(
+                        scanProgress: _scanAnimation.value,
+                        intensity: _scanPulseAnimation.value,
+                      ),
+                    ),
+                  );
+                },
+              ),
             ),
           ),
 
@@ -209,7 +264,7 @@ class _SplashScreenState extends State<SplashScreen>
                               BoxShadow(
                                 color: AppColors.primary.withValues(alpha: 0.6),
                                 blurRadius: 6,
-                              )
+                              ),
                             ],
                           ),
                         ),
@@ -225,14 +280,18 @@ class _SplashScreenState extends State<SplashScreen>
                     return AnimatedOpacity(
                       opacity: _progressAnimation.value == 1.0 ? 1.0 : 0.0,
                       duration: const Duration(milliseconds: 500),
-                      child: _progressAnimation.value == 1.0 
-                        ? AppButton(
-                            text: 'Start Journey',
-                            onPressed: () {
-                              Navigator.of(context).pushReplacementNamed(AppRoutes.home);
-                            },
-                          )
-                        : const SizedBox(height: 56), // Placeholder height so layout doesn't jump
+                      child: _progressAnimation.value == 1.0
+                          ? AppButton(
+                              text: 'Start',
+                              onPressed: () {
+                                Navigator.of(
+                                  context,
+                                ).pushReplacementNamed(AppRoutes.home);
+                              },
+                            )
+                          : const SizedBox(
+                              height: 56,
+                            ), // Placeholder height so layout doesn't jump
                     );
                   },
                 ),
@@ -247,6 +306,8 @@ class _SplashScreenState extends State<SplashScreen>
 
 // Custom painter for the subtle grid background
 class GridPainter extends CustomPainter {
+  const GridPainter();
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
@@ -266,4 +327,90 @@ class GridPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(CustomPainter oldDelegate) => false;
+}
+
+class ScanOverlayPainter extends CustomPainter {
+  const ScanOverlayPainter({
+    required this.scanProgress,
+    required this.intensity,
+  });
+
+  final double scanProgress;
+  final double intensity;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bandHeight = size.height * 0.24;
+    final scanY = lerpDouble(
+      -bandHeight,
+      size.height + bandHeight,
+      scanProgress,
+    )!;
+    final bandRect = Rect.fromLTWH(
+      0,
+      scanY - (bandHeight / 2),
+      size.width,
+      bandHeight,
+    );
+
+    final bandPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Colors.transparent,
+          AppColors.primary.withValues(alpha: 0.05 * intensity),
+          AppColors.primary.withValues(alpha: 0.14 * intensity),
+          AppColors.primary.withValues(alpha: 0.28 * intensity),
+          AppColors.primary.withValues(alpha: 0.1 * intensity),
+          Colors.transparent,
+        ],
+        stops: const [0.0, 0.18, 0.38, 0.5, 0.72, 1.0],
+      ).createShader(bandRect);
+
+    canvas.drawRect(bandRect, bandPaint);
+
+    final lineRect = Rect.fromLTWH(0, scanY - 1.5, size.width, 3);
+    final linePaint = Paint()
+      ..shader = LinearGradient(
+        colors: [
+          Colors.transparent,
+          AppColors.primary.withValues(alpha: 0.95 * intensity),
+          Colors.transparent,
+        ],
+        stops: const [0.0, 0.5, 1.0],
+      ).createShader(lineRect);
+
+    canvas.drawRect(lineRect, linePaint);
+
+    final glowPaint = Paint()
+      ..color = AppColors.primary.withValues(alpha: 0.26 * intensity)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18);
+
+    canvas.drawRect(Rect.fromLTWH(0, scanY - 10, size.width, 20), glowPaint);
+
+    for (
+      double offset = -bandHeight * 0.32;
+      offset <= bandHeight * 0.32;
+      offset += bandHeight * 0.11
+    ) {
+      final distance = (offset.abs() / (bandHeight * 0.32)).clamp(0.0, 1.0);
+      final alpha = (1 - distance) * 0.1 * intensity;
+      final streakPaint = Paint()
+        ..color = AppColors.primary.withValues(alpha: alpha)
+        ..strokeWidth = 1;
+
+      canvas.drawLine(
+        Offset(24, scanY + offset),
+        Offset(size.width - 24, scanY + offset),
+        streakPaint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant ScanOverlayPainter oldDelegate) {
+    return oldDelegate.scanProgress != scanProgress ||
+        oldDelegate.intensity != intensity;
+  }
 }
