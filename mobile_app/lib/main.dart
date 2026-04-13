@@ -15,7 +15,7 @@ class PoseTrackApp extends StatelessWidget {
       title: 'PoseTrack',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
-      initialRoute: AppRoutes.home,
+      initialRoute: AppRoutes.splash,
       onGenerateRoute: AppRoutes.generateRoute,
     );
   }
