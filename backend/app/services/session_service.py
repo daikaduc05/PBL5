@@ -20,3 +20,7 @@ def create_session(db: Session) -> SessionModel:
     db.commit()
     db.refresh(new_session)
     return new_session
+
+
+def get_session_by_id(db: Session, session_id: int) -> SessionModel | None:
+    return db.query(SessionModel).filter(SessionModel.id == session_id).first()

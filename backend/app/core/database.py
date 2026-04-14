@@ -1,10 +1,11 @@
+import os
 from collections.abc import Generator
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 
-DATABASE_URL = "sqlite:///./posetrack.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./posetrack.db")
 
 engine = create_engine(
     DATABASE_URL,
