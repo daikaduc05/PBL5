@@ -1,30 +1,56 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:mobile_app/main.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:mobile_app/navigation/app_routes.dart';
+import 'package:mobile_app/theme/app_theme.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const PoseTrackApp());
+  setUpAll(() {
+    GoogleFonts.config.allowRuntimeFetching = false;
+  });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+  Widget buildTestApp({String initialRoute = AppRoutes.home}) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.darkTheme,
+      initialRoute: initialRoute,
+      onGenerateRoute: AppRoutes.generateRoute,
+    );
+  }
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  testWidgets('home dashboard renders core sections and actions', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(buildTestApp());
+    await tester.pumpAndSettle();
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('PoseTrack'), findsOneWidget);
+    expect(find.text('System Overview'), findsOneWidget);
+    expect(find.text('Recent Session'), findsOneWidget);
+    expect(find.text('Connect Device'), findsOneWidget);
+    expect(find.text('Start Capture'), findsOneWidget);
+    expect(find.text('View Results'), findsOneWidget);
+    expect(find.text('History'), findsOneWidget);
+    expect(find.text('Settings'), findsOneWidget);
+  });
+
+  testWidgets('dashboard actions navigate to placeholder routes', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(buildTestApp());
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Start Capture'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Start Capture'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Start Capture screen'), findsOneWidget);
+    expect(
+      find.text(
+        'Camera preview, timer controls, and recording actions will live on this mobile screen.',
+      ),
+      findsOneWidget,
+    );
   });
 }
