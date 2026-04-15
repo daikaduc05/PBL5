@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../screens/device_connection_screen.dart';
 import '../screens/feature_placeholder_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/splash_screen.dart';
@@ -20,12 +21,7 @@ class AppRoutes {
         return MaterialPageRoute(builder: (_) => const HomeScreen());
       case deviceConnection:
         return MaterialPageRoute(
-          builder: (_) => const FeaturePlaceholderScreen(
-            title: 'Connect Device',
-            description:
-                'Connection controls for Raspberry Pi and the processing server plug in here next.',
-            icon: Icons.usb_rounded,
-          ),
+          builder: (_) => const DeviceConnectionScreen(),
         );
       case capture:
         return MaterialPageRoute(

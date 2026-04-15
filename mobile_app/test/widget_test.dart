@@ -40,6 +40,26 @@ void main() {
     await tester.pumpWidget(buildTestApp());
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(find.text('Connect Device'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect Device'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Device Connection'), findsOneWidget);
+    expect(find.text('IoT Link Matrix'), findsOneWidget);
+    expect(find.text('Raspberry Pi 4B'), findsOneWidget);
+    expect(find.text('Inference Server'), findsOneWidget);
+    expect(find.text('Scan'), findsNWidgets(2));
+    expect(find.text('Connect'), findsNWidgets(2));
+    expect(find.text('Reconnect'), findsNWidgets(2));
+  });
+
+  testWidgets('capture route still opens the placeholder screen', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(buildTestApp());
+    await tester.pumpAndSettle();
+
     await tester.ensureVisible(find.text('Start Capture'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Start Capture'));
