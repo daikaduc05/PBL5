@@ -61,6 +61,13 @@ class DeviceConnectionNode {
 }
 
 class MockDeviceConnectionService {
+  MockDeviceConnectionService._();
+
+  static final MockDeviceConnectionService _instance =
+      MockDeviceConnectionService._();
+
+  factory MockDeviceConnectionService() => _instance;
+
   List<DeviceConnectionNode> _devices = const [
     DeviceConnectionNode(
       endpoint: DeviceEndpoint.raspberryPi,
@@ -93,6 +100,11 @@ class MockDeviceConnectionService {
   Future<List<DeviceConnectionNode>> getDevices() async {
     await Future.delayed(const Duration(milliseconds: 180));
     return _cloneDevices();
+  }
+
+  Future<bool> allDevicesConnected() async {
+    final devices = await getDevices();
+    return devices.every((device) => device.status == DeviceLinkStatus.connected);
   }
 
   Future<List<DeviceConnectionNode>> scanDevices() async {

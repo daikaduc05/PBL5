@@ -1,7 +1,13 @@
 import 'package:flutter/material.dart';
+import '../services/mock_pose_tracking_service.dart';
+import '../screens/capture_control_screen.dart';
 import '../screens/device_connection_screen.dart';
 import '../screens/feature_placeholder_screen.dart';
+import '../screens/history_screen.dart';
 import '../screens/home_screen.dart';
+import '../screens/processing_status_screen.dart';
+import '../screens/result_screen.dart';
+import '../screens/settings_screen.dart';
 import '../screens/splash_screen.dart';
 
 class AppRoutes {
@@ -9,6 +15,7 @@ class AppRoutes {
   static const String home = '/home';
   static const String deviceConnection = '/device-connection';
   static const String capture = '/capture';
+  static const String processing = '/processing';
   static const String results = '/results';
   static const String history = '/history';
   static const String settings = '/settings';
@@ -24,41 +31,26 @@ class AppRoutes {
           builder: (_) => const DeviceConnectionScreen(),
         );
       case capture:
-        return MaterialPageRoute(
-          builder: (_) => const FeaturePlaceholderScreen(
-            title: 'Start Capture',
-            description:
-                'Camera preview, timer controls, and recording actions will live on this mobile screen.',
-            icon: Icons.play_circle_fill_rounded,
-          ),
-        );
+        return MaterialPageRoute(builder: (_) => const CaptureControlScreen());
+      case processing:
+        final draft = routeSettings.arguments;
+        if (draft is CaptureSessionDraft) {
+          return MaterialPageRoute(
+            builder: (_) => ProcessingStatusScreen(draft: draft),
+          );
+        }
+        return _missingArgumentRoute('Capture session draft');
       case results:
+        final result = routeSettings.arguments;
         return MaterialPageRoute(
-          builder: (_) => const FeaturePlaceholderScreen(
-            title: 'View Results',
-            description:
-                'Processed pose overlays, confidence analytics, and saved outputs are scaffolded for this route.',
-            icon: Icons.analytics_rounded,
+          builder: (_) => ResultScreen(
+            initialResult: result is PoseAnalysisResult ? result : null,
           ),
         );
       case history:
-        return MaterialPageRoute(
-          builder: (_) => const FeaturePlaceholderScreen(
-            title: 'History',
-            description:
-                'Session timeline cards and quick access to older captures will be connected here.',
-            icon: Icons.history_rounded,
-          ),
-        );
+        return MaterialPageRoute(builder: (_) => const HistoryScreen());
       case settings:
-        return MaterialPageRoute(
-          builder: (_) => const FeaturePlaceholderScreen(
-            title: 'Settings',
-            description:
-                'Network settings, default capture preferences, and upload options can be added on this screen.',
-            icon: Icons.settings_suggest_rounded,
-          ),
-        );
+        return MaterialPageRoute(builder: (_) => const SettingsScreen());
       default:
         return MaterialPageRoute(
           builder: (_) => Scaffold(
@@ -68,5 +60,15 @@ class AppRoutes {
           ),
         );
     }
+  }
+
+  static MaterialPageRoute<void> _missingArgumentRoute(String label) {
+    return MaterialPageRoute(
+      builder: (_) => FeaturePlaceholderScreen(
+        title: 'Route Error',
+        description: '$label was required to open this screen.',
+        icon: Icons.error_outline_rounded,
+      ),
+    );
   }
 }
