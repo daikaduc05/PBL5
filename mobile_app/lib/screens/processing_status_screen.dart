@@ -17,10 +17,7 @@ import '../utils/app_formatters.dart';
 class ProcessingStatusScreen extends StatefulWidget {
   final CaptureSessionDraft draft;
 
-  const ProcessingStatusScreen({
-    super.key,
-    required this.draft,
-  });
+  const ProcessingStatusScreen({super.key, required this.draft});
 
   @override
   State<ProcessingStatusScreen> createState() => _ProcessingStatusScreenState();
@@ -54,9 +51,7 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
       return _stages.length - 1;
     }
 
-    return (_progress * _stages.length)
-        .floor()
-        .clamp(0, _stages.length - 1);
+    return (_progress * _stages.length).floor().clamp(0, _stages.length - 1);
   }
 
   void _startProgress() {
@@ -97,10 +92,9 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
   }
 
   void _goBackHome() {
-    Navigator.of(context).pushNamedAndRemoveUntil(
-      AppRoutes.home,
-      (route) => false,
-    );
+    Navigator.of(
+      context,
+    ).pushNamedAndRemoveUntil(AppRoutes.home, (route) => false);
   }
 
   void _openResult() {
@@ -109,10 +103,9 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
       return;
     }
 
-    Navigator.of(context).pushReplacementNamed(
-      AppRoutes.results,
-      arguments: result,
-    );
+    Navigator.of(
+      context,
+    ).pushReplacementNamed(AppRoutes.results, arguments: result);
   }
 
   @override
@@ -134,7 +127,9 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
                 onBackPressed: _goBackHome,
                 trailing: StatusBadge(
                   label: _result == null ? 'AI Running' : 'Complete',
-                  color: _result == null ? AppColors.primary : AppColors.success,
+                  color: _result == null
+                      ? AppColors.primary
+                      : AppColors.success,
                 ),
               ),
               const SizedBox(height: 24),
@@ -208,8 +203,9 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
                       child: LinearProgressIndicator(
                         value: _progress,
                         minHeight: 10,
-                        backgroundColor:
-                            AppColors.background.withValues(alpha: 0.42),
+                        backgroundColor: AppColors.background.withValues(
+                          alpha: 0.42,
+                        ),
                         valueColor: const AlwaysStoppedAnimation<Color>(
                           AppColors.primary,
                         ),
@@ -276,8 +272,10 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
                     ..._stages.asMap().entries.map((entry) {
                       final index = entry.key;
                       final stage = entry.value;
-                      final isDone = index < _activeStageIndex || _result != null;
-                      final isActive = index == _activeStageIndex && _result == null;
+                      final isDone =
+                          index < _activeStageIndex || _result != null;
+                      final isActive =
+                          index == _activeStageIndex && _result == null;
 
                       return Padding(
                         padding: EdgeInsets.only(
