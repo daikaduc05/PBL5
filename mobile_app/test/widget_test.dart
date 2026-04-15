@@ -40,17 +40,72 @@ void main() {
     await tester.pumpWidget(buildTestApp());
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(find.text('Connect Device'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect Device'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Device Connection'), findsOneWidget);
+    expect(find.text('IoT Link Matrix'), findsOneWidget);
+    expect(find.text('Raspberry Pi 4B'), findsOneWidget);
+    expect(find.text('Inference Server'), findsOneWidget);
+    expect(find.text('Scan'), findsNWidgets(2));
+    expect(find.text('Connect'), findsNWidgets(2));
+    expect(find.text('Reconnect'), findsNWidgets(2));
+  });
+
+  testWidgets('capture route opens the mobile control screen', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(buildTestApp());
+    await tester.pumpAndSettle();
+
     await tester.ensureVisible(find.text('Start Capture'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Start Capture'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Start Capture screen'), findsOneWidget);
-    expect(
-      find.text(
-        'Camera preview, timer controls, and recording actions will live on this mobile screen.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('Capture Control'), findsOneWidget);
+    expect(find.text('Capture Mode'), findsOneWidget);
+    expect(find.text('Recording Duration'), findsOneWidget);
+    expect(find.text('Start Recording'), findsOneWidget);
+    expect(find.text('Stop Recording'), findsOneWidget);
+    expect(find.text('Capture Image'), findsOneWidget);
+    expect(find.text('5s'), findsOneWidget);
+    expect(find.text('10s'), findsAtLeastNWidgets(1));
+    expect(find.text('15s'), findsOneWidget);
+  });
+
+  testWidgets('results, history, and settings routes are available', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(buildTestApp());
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('View Results'));
+    await tester.tap(find.text('View Results'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pose Result'), findsOneWidget);
+    expect(find.text('Analysis Summary'), findsOneWidget);
+
+    await tester.tap(find.text('History'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('History'), findsOneWidget);
+    expect(find.text('Session Timeline'), findsOneWidget);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Settings'));
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Settings'), findsOneWidget);
+    expect(find.text('Network Endpoints'), findsOneWidget);
+    expect(find.text('Save Settings'), findsOneWidget);
   });
 }
