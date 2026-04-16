@@ -1,3 +1,4 @@
+import json
 import time
 
 import zmq
@@ -12,10 +13,19 @@ def main():
 
     time.sleep(1)
 
-    message = "Hello from Raspberry Pi test sender"
-    socket.send_string(message)
+    metadata = {
+        "session_id": "sess_001",
+        "device_id": "raspi_01",
+        "frame_id": 1,
+        "timestamp": time.time(),
+        "message_type": "frame_metadata_test",
+    }
+    message = json.dumps(metadata)
 
-    print(f"[Sender] Sent: {message}")
+    print("[Sender] Sending metadata JSON...")
+    print(f"[Sender] Payload: {message}")
+    socket.send_string(message)
+    print("[Sender] Sent successfully")
 
 
 if __name__ == "__main__":
