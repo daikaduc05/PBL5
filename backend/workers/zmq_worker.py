@@ -1,9 +1,49 @@
 """Simple ZeroMQ worker used to test incoming messages."""
 
 import json
+import sys
 from pathlib import Path
+from typing import Callable
 
 import zmq
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+WORKER_DIR = Path(__file__).resolve().parent
+_RUN_POSE_INFERENCE: Callable[[str, str | None], dict] | None = None
+
+
+def get_pose_inference_runner() -> Callable[[str, str | None], dict]:
+    """Import and cache the pose inference function on first use."""
+    global _RUN_POSE_INFERENCE
+
+    if _RUN_POSE_INFERENCE is None:
+        from core_model.inference import run_pose_inference
+
+        _RUN_POSE_INFERENCE = run_pose_inference
+
+    return _RUN_POSE_INFERENCE
+
+
+def run_pose_for_saved_frame(input_path: Path, session_id: str, frame_id: str) -> None:
+    """Run pose inference for a saved frame without interrupting the worker loop."""
+    results_dir = WORKER_DIR / "results" / session_id
+    results_dir.mkdir(parents=True, exist_ok=True)
+    result_path = results_dir / f"frame_{frame_id}_pose.jpg"
+
+    print(f"[ZMQ Worker] Pose input frame path: {input_path}")
+    print(f"[ZMQ Worker] Pose output result path: {result_path}")
+
+    try:
+        pose_inference_runner = get_pose_inference_runner()
+        result = pose_inference_runner(str(input_path), str(result_path))
+        print(f"[ZMQ Worker] Pose inference result: {result}")
+        if not result.get("success", False):
+            print("[ZMQ Worker] Warning: pose inference returned success=False.")
+    except Exception as exc:
+        print(f"[ZMQ Worker] Error during pose inference: {exc}")
 
 
 def main() -> None:
@@ -31,8 +71,8 @@ def main() -> None:
                 try:
                     metadata_json = metadata_bytes.decode("utf-8")
                     metadata = json.loads(metadata_json)
-                    session_id = metadata.get("session_id", "unknown_session")
-                    frame_id = metadata.get("frame_id", "unknown")
+                    session_id = str(metadata.get("session_id", "unknown_session"))
+                    frame_id = str(metadata.get("frame_id", "unknown"))
 
                     print(f"[ZMQ Worker] Raw metadata JSON: {metadata_json}")
                     print(f"[ZMQ Worker] session_id: {session_id}")
@@ -45,7 +85,7 @@ def main() -> None:
 
                     try:
                         # Group received frames by session to mirror backend storage.
-                        output_dir = Path(__file__).resolve().parent / "output" / session_id
+                        output_dir = WORKER_DIR / "output" / session_id
                         output_dir.mkdir(parents=True, exist_ok=True)
                         output_path = output_dir / f"frame_{frame_id}.jpg"
                         output_path.write_bytes(image_bytes)
@@ -54,6 +94,7 @@ def main() -> None:
                         print(f"[ZMQ Worker] Saved session_id: {session_id}")
                         print(f"[ZMQ Worker] Saved frame_id: {frame_id}")
                         print(f"[ZMQ Worker] Saved bytes length: {len(image_bytes)}")
+                        run_pose_for_saved_frame(output_path, session_id, frame_id)
                     except OSError as exc:
                         print(f"[ZMQ Worker] Error writing image file: {exc}")
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
