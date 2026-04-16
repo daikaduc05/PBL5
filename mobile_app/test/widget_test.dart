@@ -68,9 +68,9 @@ void main() {
     expect(find.text('Capture Control'), findsOneWidget);
     expect(find.text('Capture Mode'), findsOneWidget);
     expect(find.text('Recording Duration'), findsOneWidget);
-    expect(find.text('Start Recording'), findsOneWidget);
-    expect(find.text('Stop Recording'), findsOneWidget);
-    expect(find.text('Capture Image'), findsOneWidget);
+    expect(find.text('START RECORDING'), findsOneWidget);
+    expect(find.text('STOP RECORDING'), findsOneWidget);
+    expect(find.text('CAPTURE IMAGE'), findsOneWidget);
     expect(find.text('5s'), findsOneWidget);
     expect(find.text('10s'), findsAtLeastNWidgets(1));
     expect(find.text('15s'), findsOneWidget);
@@ -87,17 +87,21 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Pose Result'), findsOneWidget);
+    expect(find.text('Detected Keypoints'), findsOneWidget);
+    expect(find.text('Session ID'), findsOneWidget);
     expect(find.text('Analysis Summary'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('History'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('History'));
     await tester.pumpAndSettle();
 
     expect(find.text('History'), findsOneWidget);
     expect(find.text('Session Timeline'), findsOneWidget);
 
-    await tester.pageBack();
+    await tester.ensureVisible(find.text('BACK TO HOME'));
     await tester.pumpAndSettle();
-    await tester.pageBack();
+    await tester.tap(find.text('BACK TO HOME'));
     await tester.pumpAndSettle();
 
     await tester.ensureVisible(find.text('Settings'));
@@ -106,6 +110,6 @@ void main() {
 
     expect(find.text('Settings'), findsOneWidget);
     expect(find.text('Network Endpoints'), findsOneWidget);
-    expect(find.text('Save Settings'), findsOneWidget);
+    expect(find.text('SAVE SETTINGS'), findsOneWidget);
   });
 }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -23,9 +24,11 @@ class ProcessingStatusScreen extends StatefulWidget {
   State<ProcessingStatusScreen> createState() => _ProcessingStatusScreenState();
 }
 
-class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
+class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
+    with SingleTickerProviderStateMixin {
   final MockPoseTrackingService _poseService = MockPoseTrackingService();
 
+  late final AnimationController _pulseController;
   late final List<ProcessingStage> _stages;
   Timer? _timer;
 
@@ -36,6 +39,10 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
   @override
   void initState() {
     super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    )..repeat();
     _stages = _poseService.getProcessingStages(widget.draft);
     _startProgress();
   }
@@ -43,25 +50,47 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
   @override
   void dispose() {
     _timer?.cancel();
+    _pulseController.dispose();
     super.dispose();
   }
 
   int get _activeStageIndex {
-    if (_progress == 1.0) {
+    if (_result != null || _progress >= 1.0) {
       return _stages.length - 1;
     }
 
     return (_progress * _stages.length).floor().clamp(0, _stages.length - 1);
   }
 
+  Duration get _estimatedRemaining {
+    if (_result != null) {
+      return Duration.zero;
+    }
+
+    if (_isFinalizing) {
+      return const Duration(seconds: 1);
+    }
+
+    final remaining = (1.0 - _progress).clamp(0.0, 1.0);
+    final ticks = (remaining / 0.038).ceil();
+    return Duration(milliseconds: (ticks * 220) + 420);
+  }
+
   void _startProgress() {
-    _timer = Timer.periodic(const Duration(milliseconds: 650), (timer) async {
-      if (!mounted || _isFinalizing) {
+    _timer = Timer.periodic(const Duration(milliseconds: 220), (timer) async {
+      if (!mounted || _isFinalizing || _result != null) {
         timer.cancel();
         return;
       }
 
-      final nextProgress = (_progress + 0.18).clamp(0.0, 1.0).toDouble();
+      final increment = switch (_progress) {
+        < 0.18 => 0.055,
+        < 0.36 => 0.045,
+        < 0.58 => 0.038,
+        < 0.82 => 0.03,
+        _ => 0.022,
+      };
+      final nextProgress = (_progress + increment).clamp(0.0, 1.0).toDouble();
 
       setState(() {
         _progress = nextProgress;
@@ -72,6 +101,26 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
         await _finalize();
       }
     });
+  }
+
+  double _stageProgress(int index) {
+    if (_result != null) {
+      return 1.0;
+    }
+
+    final segmentSize = 1 / _stages.length;
+    final segmentStart = index * segmentSize;
+    final segmentEnd = segmentStart + segmentSize;
+
+    if (_progress <= segmentStart) {
+      return 0.0;
+    }
+
+    if (_progress >= segmentEnd) {
+      return 1.0;
+    }
+
+    return ((_progress - segmentStart) / segmentSize).clamp(0.0, 1.0);
   }
 
   Future<void> _finalize() async {
@@ -100,6 +149,13 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
   void _openResult() {
     final result = _result;
     if (result == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'PoseTrack is still generating the result package. Please wait a moment.',
+          ),
+        ),
+      );
       return;
     }
 
@@ -108,10 +164,55 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
     ).pushReplacementNamed(AppRoutes.results, arguments: result);
   }
 
+  IconData _iconForStage(int index) {
+    return switch (index) {
+      0 => Icons.upload_rounded,
+      1 => Icons.cloud_upload_rounded,
+      2 => Icons.movie_filter_rounded,
+      3 => Icons.accessibility_new_rounded,
+      _ => Icons.analytics_rounded,
+    };
+  }
+
+  String _formatEta(Duration value) {
+    if (value <= Duration.zero) {
+      return '0s';
+    }
+
+    if (value.inMinutes >= 1) {
+      final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
+      return '${value.inMinutes}m ${seconds}s';
+    }
+
+    return '${value.inSeconds}s';
+  }
+
+  String get _captureSummary {
+    return switch (widget.draft.mode) {
+      CaptureMode.image => 'Single frame upload',
+      CaptureMode.video => '${widget.draft.actualDurationSeconds}s motion clip',
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
-    final progressLabel = '${(_progress * 100).round()}%';
     final activeStage = _stages[_activeStageIndex];
+    final progressLabel = '${(_progress * 100).round()}%';
+    final stageCounter = _result == null
+        ? '${_activeStageIndex + 1}/${_stages.length}'
+        : '${_stages.length}/${_stages.length}';
+    final statusColor = _result != null ? AppColors.success : AppColors.primary;
+    final statusLabel = _result != null
+        ? 'Result Ready'
+        : _isFinalizing
+        ? 'Finalizing'
+        : 'AI Running';
+    final heroTitle = _result != null
+        ? 'Processing Complete'
+        : activeStage.title;
+    final heroDescription = _result != null
+        ? 'Pose overlays, confidence scores, and feedback are ready for review.'
+        : activeStage.description;
 
     return ScreenContainer(
       padding: EdgeInsets.zero,
@@ -123,18 +224,141 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
               ScreenHeaderBar(
                 title: 'Processing Status',
                 subtitle:
-                    'Tracking the Raspberry Pi upload and server-side pose estimation pipeline in real time.',
+                    'Tracking the PoseTrack mobile upload, server queue, and pose estimation pipeline in real time.',
                 onBackPressed: _goBackHome,
                 trailing: StatusBadge(
-                  label: _result == null ? 'AI Running' : 'Complete',
-                  color: _result == null
-                      ? AppColors.primary
-                      : AppColors.success,
+                  label: statusLabel,
+                  color: statusColor,
+                  icon: _result != null
+                      ? Icons.check_circle_outline_rounded
+                      : Icons.motion_photos_on_rounded,
                 ),
               ),
               const SizedBox(height: 24),
               GlassPanel(
                 highlighted: true,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final useColumnLayout = constraints.maxWidth < 360;
+
+                        if (useColumnLayout) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _HeroCopy(
+                                stageCounter: stageCounter,
+                                title: heroTitle,
+                                description: heroDescription,
+                              ),
+                              const SizedBox(height: 18),
+                              Center(
+                                child: _ProcessingBeacon(
+                                  animation: _pulseController,
+                                  isComplete: _result != null,
+                                ),
+                              ),
+                            ],
+                          );
+                        }
+
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: _HeroCopy(
+                                stageCounter: stageCounter,
+                                title: heroTitle,
+                                description: heroDescription,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            _ProcessingBeacon(
+                              animation: _pulseController,
+                              isComplete: _result != null,
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                progressLabel,
+                                style: AppTypography.h1.copyWith(fontSize: 44),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _result != null
+                                    ? 'Inference finished and results packaged.'
+                                    : 'Live stage: ${activeStage.title}',
+                                style: AppTypography.bodyMedium.copyWith(
+                                  color: AppColors.textSecondary,
+                                  fontSize: 15,
+                                  height: 1.2,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        _TelemetryMetric(
+                          label: _result != null ? 'Status' : 'ETA',
+                          value: _result != null
+                              ? 'READY'
+                              : _formatEta(_estimatedRemaining),
+                          accentColor: _result != null
+                              ? AppColors.success
+                              : AppColors.primary,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    _AnimatedProgressBar(
+                      progress: _progress,
+                      animation: _pulseController,
+                      isComplete: _result != null,
+                    ),
+                    const SizedBox(height: 16),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        _InfoPill(
+                          icon: Icons.badge_rounded,
+                          label: 'Session',
+                          value: widget.draft.sessionId,
+                        ),
+                        _InfoPill(
+                          icon: Icons.videocam_rounded,
+                          label: 'Capture',
+                          value: _captureSummary,
+                        ),
+                        _InfoPill(
+                          icon: Icons.schedule_rounded,
+                          label: 'Started',
+                          value: formatShortDateTime(widget.draft.capturedAt),
+                        ),
+                        _InfoPill(
+                          icon: Icons.cloud_done_rounded,
+                          label: 'Upload',
+                          value: widget.draft.autoUpload ? 'Auto' : 'Manual',
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              GlassPanel(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -146,146 +370,50 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Session ${widget.draft.sessionId}',
-                                style: AppTypography.h2.copyWith(fontSize: 22),
+                                'Processing Timeline',
+                                style: AppTypography.h3.copyWith(fontSize: 18),
                               ),
                               const SizedBox(height: 6),
                               Text(
-                                'Captured ${formatSessionTimestamp(widget.draft.capturedAt)} in ${widget.draft.mode.label.toLowerCase()} mode.',
+                                'Following the mobile-to-server AI workflow from upload through final pose result generation.',
                                 style: AppTypography.bodyMedium.copyWith(
                                   fontSize: 14,
-                                  height: 1.25,
+                                  height: 1.24,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(width: 14),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.primary.withValues(alpha: 0.14),
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(
-                              color: AppColors.primary.withValues(alpha: 0.28),
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Progress',
-                                style: AppTypography.bodyMedium.copyWith(
-                                  color: AppColors.textMuted,
-                                  fontSize: 11,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                progressLabel,
-                                style: AppTypography.bodyLarge.copyWith(
-                                  color: AppColors.textPrimary,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                          ),
+                        const SizedBox(width: 12),
+                        _TelemetryMetric(
+                          label: 'Pipeline',
+                          value: stageCounter,
+                          accentColor: AppColors.accentSoft,
                         ),
                       ],
                     ),
                     const SizedBox(height: 18),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(999),
-                      child: LinearProgressIndicator(
-                        value: _progress,
-                        minHeight: 10,
-                        backgroundColor: AppColors.background.withValues(
-                          alpha: 0.42,
-                        ),
-                        valueColor: const AlwaysStoppedAnimation<Color>(
-                          AppColors.primary,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.background.withValues(alpha: 0.28),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: AppColors.border.withValues(alpha: 0.68),
-                        ),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(
-                            Icons.psychology_alt_rounded,
-                            size: 18,
-                            color: AppColors.primary,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              activeStage.description,
-                              style: AppTypography.bodyMedium.copyWith(
-                                color: AppColors.textPrimary.withValues(
-                                  alpha: 0.86,
-                                ),
-                                fontSize: 14,
-                                height: 1.2,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 18),
-              GlassPanel(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Processing Timeline',
-                      style: AppTypography.h3.copyWith(fontSize: 18),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Each stage mirrors the AI workflow described in the project flow diagram.',
-                      style: AppTypography.bodyMedium.copyWith(
-                        fontSize: 14,
-                        height: 1.25,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
                     ..._stages.asMap().entries.map((entry) {
                       final index = entry.key;
                       final stage = entry.value;
-                      final isDone =
-                          index < _activeStageIndex || _result != null;
+                      final isComplete =
+                          _result != null || index < _activeStageIndex;
                       final isActive =
-                          index == _activeStageIndex && _result == null;
+                          _result == null && index == _activeStageIndex;
 
                       return Padding(
                         padding: EdgeInsets.only(
                           bottom: index == _stages.length - 1 ? 0 : 14,
                         ),
-                        child: _StageRow(
+                        child: _TimelineStageTile(
                           title: stage.title,
                           description: stage.description,
-                          isDone: isDone,
+                          icon: _iconForStage(index),
+                          progress: _stageProgress(index),
+                          isDone: isComplete,
                           isActive: isActive,
+                          isLast: index == _stages.length - 1,
+                          animation: _pulseController,
                         ),
                       );
                     }),
@@ -296,8 +424,8 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
               SizedBox(
                 width: double.infinity,
                 child: AppButton(
-                  text: _result == null ? 'Processing...' : 'Open Result',
-                  onPressed: _result == null ? () {} : _openResult,
+                  text: 'Open Result',
+                  onPressed: _openResult,
                   isLoading: _isFinalizing,
                 ),
               ),
@@ -318,17 +446,378 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen> {
   }
 }
 
-class _StageRow extends StatelessWidget {
+class _HeroCopy extends StatelessWidget {
+  final String stageCounter;
   final String title;
   final String description;
-  final bool isDone;
-  final bool isActive;
 
-  const _StageRow({
+  const _HeroCopy({
+    required this.stageCounter,
     required this.title,
     required this.description,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: AppColors.background.withValues(alpha: 0.32),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: AppColors.border.withValues(alpha: 0.82)),
+          ),
+          child: Text(
+            'Pipeline Step $stageCounter',
+            style: AppTypography.bodyMedium.copyWith(
+              color: AppColors.primary,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 240),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          child: Text(
+            title,
+            key: ValueKey(title),
+            style: AppTypography.h2.copyWith(fontSize: 24),
+          ),
+        ),
+        const SizedBox(height: 8),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 240),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          child: Text(
+            description,
+            key: ValueKey(description),
+            style: AppTypography.bodyMedium.copyWith(
+              color: AppColors.textSecondary,
+              fontSize: 14,
+              height: 1.3,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AnimatedProgressBar extends StatelessWidget {
+  final double progress;
+  final Animation<double> animation;
+  final bool isComplete;
+
+  const _AnimatedProgressBar({
+    required this.progress,
+    required this.animation,
+    required this.isComplete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final safeProgress = progress.clamp(0.0, 1.0);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final fillWidth = math
+            .max(width * safeProgress, safeProgress > 0 ? 32.0 : 0.0)
+            .toDouble();
+        final shimmerTravel = fillWidth + 80;
+
+        return AnimatedBuilder(
+          animation: animation,
+          builder: (context, child) {
+            final shimmerOffset = (shimmerTravel * animation.value) - 40;
+
+            return Container(
+              height: 10,
+              decoration: BoxDecoration(
+                color: AppColors.background.withValues(alpha: 0.45),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: AppColors.border.withValues(alpha: 0.6),
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: Stack(
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      width: fillWidth,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: isComplete
+                              ? const [AppColors.success, AppColors.primary]
+                              : const [AppColors.primary, AppColors.accent],
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withValues(alpha: 0.26),
+                            blurRadius: 16,
+                            spreadRadius: 1,
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (safeProgress > 0)
+                      Positioned(
+                        left: shimmerOffset,
+                        top: -6,
+                        bottom: -6,
+                        child: Container(
+                          width: 38,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.centerLeft,
+                              end: Alignment.centerRight,
+                              colors: [
+                                Colors.transparent,
+                                Colors.white.withValues(alpha: 0.0),
+                                Colors.white.withValues(alpha: 0.35),
+                                Colors.transparent,
+                              ],
+                              stops: const [0.0, 0.25, 0.6, 1.0],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _ProcessingBeacon extends StatelessWidget {
+  final Animation<double> animation;
+  final bool isComplete;
+
+  const _ProcessingBeacon({required this.animation, required this.isComplete});
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = isComplete ? AppColors.success : AppColors.primary;
+
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, child) {
+        final wave = (math.sin(animation.value * math.pi * 2) + 1) / 2;
+        final outerSize = 102 + (wave * 8);
+        final midSize = 76 + (wave * 6);
+        final coreSize = 48 + (wave * 4);
+
+        return SizedBox(
+          width: 118,
+          height: 118,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Container(
+                width: outerSize,
+                height: outerSize,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: accent.withValues(alpha: 0.18)),
+                  gradient: RadialGradient(
+                    colors: [
+                      accent.withValues(alpha: 0.12),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+              ),
+              Container(
+                width: midSize,
+                height: midSize,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: accent.withValues(alpha: 0.28)),
+                  color: accent.withValues(alpha: 0.08),
+                ),
+              ),
+              Container(
+                width: coreSize,
+                height: coreSize,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.white.withValues(alpha: 0.24),
+                      accent.withValues(alpha: 0.84),
+                    ],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: accent.withValues(alpha: 0.38),
+                      blurRadius: 18 + (wave * 10),
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  isComplete ? Icons.check_rounded : Icons.sync_rounded,
+                  color: AppColors.background,
+                  size: 26,
+                ),
+              ),
+              Positioned(
+                bottom: 8,
+                child: Row(
+                  children: List.generate(3, (index) {
+                    final phase = (animation.value + (index * 0.16)) % 1.0;
+                    final barHeight =
+                        10 + (((math.sin(phase * math.pi * 2) + 1) / 2) * 8);
+
+                    return Padding(
+                      padding: EdgeInsets.only(right: index == 2 ? 0 : 5),
+                      child: Container(
+                        width: 5,
+                        height: barHeight,
+                        decoration: BoxDecoration(
+                          color: accent.withValues(alpha: 0.9 - (index * 0.14)),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _InfoPill extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _InfoPill({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.background.withValues(alpha: 0.28),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.border.withValues(alpha: 0.72)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: AppColors.primary),
+          const SizedBox(width: 8),
+          Text(
+            '$label: ',
+            style: AppTypography.bodyMedium.copyWith(
+              color: AppColors.textMuted,
+              fontSize: 13,
+            ),
+          ),
+          Text(
+            value,
+            style: AppTypography.bodyMedium.copyWith(
+              color: AppColors.textPrimary,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TelemetryMetric extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color accentColor;
+
+  const _TelemetryMetric({
+    required this.label,
+    required this.value,
+    required this.accentColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.background.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: accentColor.withValues(alpha: 0.28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: AppTypography.bodyMedium.copyWith(
+              color: AppColors.textMuted,
+              fontSize: 11,
+              letterSpacing: 0.8,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: AppTypography.bodyLarge.copyWith(
+              color: AppColors.textPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TimelineStageTile extends StatelessWidget {
+  final String title;
+  final String description;
+  final IconData icon;
+  final double progress;
+  final bool isDone;
+  final bool isActive;
+  final bool isLast;
+  final Animation<double> animation;
+
+  const _TimelineStageTile({
+    required this.title,
+    required this.description,
+    required this.icon,
+    required this.progress,
     required this.isDone,
     required this.isActive,
+    required this.isLast,
+    required this.animation,
   });
 
   @override
@@ -338,61 +827,251 @@ class _StageRow extends StatelessWidget {
         : isActive
         ? AppColors.primary
         : AppColors.border;
+    final stateLabel = isDone
+        ? 'Complete'
+        : isActive
+        ? '${(progress * 100).round()}%'
+        : 'Queued';
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: accent.withValues(alpha: isDone || isActive ? 0.14 : 0.06),
-            shape: BoxShape.circle,
-            border: Border.all(color: accent.withValues(alpha: 0.36)),
-            boxShadow: isDone || isActive
-                ? [
-                    BoxShadow(
-                      color: accent.withValues(alpha: 0.14),
-                      blurRadius: 18,
+        SizedBox(
+          width: 42,
+          child: Column(
+            children: [
+              AnimatedBuilder(
+                animation: animation,
+                builder: (context, child) {
+                  final glow = isActive
+                      ? 0.18 +
+                            (((math.sin(animation.value * math.pi * 2) + 1) /
+                                    2) *
+                                0.2)
+                      : isDone
+                      ? 0.12
+                      : 0.0;
+
+                  return Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: accent.withValues(
+                        alpha: isDone || isActive ? 0.16 : 0.06,
+                      ),
+                      border: Border.all(color: accent.withValues(alpha: 0.42)),
+                      boxShadow: glow > 0
+                          ? [
+                              BoxShadow(
+                                color: accent.withValues(alpha: glow),
+                                blurRadius: 18,
+                                spreadRadius: 1,
+                              ),
+                            ]
+                          : null,
                     ),
-                  ]
-                : null,
-          ),
-          child: Icon(
-            isDone
-                ? Icons.check_rounded
-                : isActive
-                ? Icons.sync_rounded
-                : Icons.radio_button_unchecked_rounded,
-            size: 18,
-            color: accent,
+                    child: Icon(
+                      isDone ? Icons.check_rounded : icon,
+                      size: 19,
+                      color: isDone || isActive ? accent : AppColors.textMuted,
+                    ),
+                  );
+                },
+              ),
+              if (!isLast)
+                Container(
+                  width: 2,
+                  height: 84,
+                  margin: const EdgeInsets.symmetric(vertical: 8),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(999),
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        accent.withValues(
+                          alpha: isDone || isActive ? 0.5 : 0.2,
+                        ),
+                        AppColors.border.withValues(alpha: 0.18),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
         const SizedBox(width: 12),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: AppTypography.bodyLarge.copyWith(
-                  color: AppColors.textPrimary,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 16,
-                ),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: isActive
+                  ? AppColors.background.withValues(alpha: 0.22)
+                  : AppColors.background.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: isActive
+                    ? AppColors.primary.withValues(alpha: 0.3)
+                    : isDone
+                    ? AppColors.success.withValues(alpha: 0.24)
+                    : AppColors.border.withValues(alpha: 0.68),
               ),
-              const SizedBox(height: 4),
-              Text(
-                description,
-                style: AppTypography.bodyMedium.copyWith(
-                  fontSize: 13.5,
-                  height: 1.22,
+              boxShadow: isActive
+                  ? [
+                      BoxShadow(
+                        color: AppColors.primary.withValues(alpha: 0.1),
+                        blurRadius: 16,
+                        spreadRadius: 1,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: AppTypography.bodyLarge.copyWith(
+                          color: AppColors.textPrimary,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: accent.withValues(
+                          alpha: isDone || isActive ? 0.14 : 0.08,
+                        ),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: accent.withValues(
+                            alpha: isDone || isActive ? 0.28 : 0.2,
+                          ),
+                        ),
+                      ),
+                      child: Text(
+                        stateLabel,
+                        style: AppTypography.bodyMedium.copyWith(
+                          color: isDone || isActive
+                              ? AppColors.textPrimary
+                              : AppColors.textMuted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.6,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 6),
+                Text(
+                  description,
+                  style: AppTypography.bodyMedium.copyWith(
+                    color: AppColors.textSecondary,
+                    fontSize: 13.5,
+                    height: 1.24,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _StageProgressBar(
+                  progress: isDone ? 1.0 : progress,
+                  accent: accent,
+                  animation: animation,
+                  animate: isActive,
+                ),
+              ],
+            ),
           ),
         ),
       ],
+    );
+  }
+}
+
+class _StageProgressBar extends StatelessWidget {
+  final double progress;
+  final Color accent;
+  final Animation<double> animation;
+  final bool animate;
+
+  const _StageProgressBar({
+    required this.progress,
+    required this.accent,
+    required this.animation,
+    required this.animate,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final fillWidth = math
+            .max(width * progress.clamp(0.0, 1.0), 0.0)
+            .toDouble();
+
+        return AnimatedBuilder(
+          animation: animation,
+          builder: (context, child) {
+            final shimmerOffset = (fillWidth * animation.value) - 26;
+
+            return Container(
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.background.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: Stack(
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      width: fillWidth,
+                      decoration: BoxDecoration(
+                        color: accent,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                    if (animate && fillWidth > 0)
+                      Positioned(
+                        left: shimmerOffset,
+                        top: -4,
+                        bottom: -4,
+                        child: Container(
+                          width: 24,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Colors.transparent,
+                                Colors.white.withValues(alpha: 0.3),
+                                Colors.transparent,
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
