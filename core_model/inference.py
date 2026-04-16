@@ -75,7 +75,7 @@ class PoseInput:
         self,
         image_source: str | Path | np.ndarray,
         image_size: tuple[int, int] = (192, 256),
-        conf: float = 0.5,
+        conf: float = 0.3,
         detector: YOLO | None = None,
     ) -> None:
         self.image_size = np.array(image_size)
