@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "D:\TaiLieuNam3_DUT\HKII\PBL5\PBL5\backend\workers\zmq_worker.py", line 69, in <module>
+    main()
+  File "D:\TaiLieuNam3_DUT\HKII\PBL5\PBL5\backend\workers\zmq_worker.py", line 14, in main
+    socket.bind("tcp://*:5555")
+  File "D:\TaiLieuNam3_DUT\HKII\PBL5\PBL5\backend\.venv\lib\site-packages\zmq\sugar\socket.py", line 320, in bind
+    super().bind(addr)
+  File "zmq/backend/cython/_zmq.py", line 1009, in zmq.backend.cython._zmq.Socket.bind
+    _check_rc(rc)
+  File "zmq/backend/cython/_zmq.py", line 190, in zmq.backend.cython._zmq._check_rc
+    raise ZMQError(errno)
+zmq.error.ZMQError: Address in use (addr='tcp://*:5555')

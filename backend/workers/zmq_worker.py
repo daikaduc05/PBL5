@@ -1,6 +1,7 @@
 """Simple ZeroMQ worker used to test incoming messages."""
 
 import json
+import os
 from pathlib import Path
 
 import zmq
@@ -31,12 +32,12 @@ def main() -> None:
                 try:
                     metadata_json = metadata_bytes.decode("utf-8")
                     metadata = json.loads(metadata_json)
-                    filename = metadata.get("filename") or "test_image.jpg"
+                    frame_id = metadata.get("frame_id", "unknown")
 
                     print(f"[ZMQ Worker] Raw metadata JSON: {metadata_json}")
                     print(f"[ZMQ Worker] session_id: {metadata.get('session_id')}")
                     print(f"[ZMQ Worker] device_id: {metadata.get('device_id')}")
-                    print(f"[ZMQ Worker] frame_id: {metadata.get('frame_id')}")
+                    print(f"[ZMQ Worker] frame_id: {frame_id}")
                     print(f"[ZMQ Worker] timestamp: {metadata.get('timestamp')}")
                     print(f"[ZMQ Worker] message_type: {metadata.get('message_type')}")
                     print(f"[ZMQ Worker] filename: {metadata.get('filename')}")
@@ -45,8 +46,9 @@ def main() -> None:
                     try:
                         output_dir = Path(__file__).resolve().parent / "output"
                         output_dir.mkdir(parents=True, exist_ok=True)
-                        output_path = output_dir / f"received_{Path(filename).name}"
-                        output_path.write_bytes(image_bytes)
+                        output_path = os.path.join(output_dir, f"received_frame_{frame_id}.jpg")
+                        Path(output_path).write_bytes(image_bytes)
+                        print(f"[ZMQ Worker] Saved frame_id: {frame_id}")
                         print(f"[ZMQ Worker] Saved image to {output_path}")
                         print(f"[ZMQ Worker] Saved bytes length: {len(image_bytes)}")
                     except OSError as exc:
