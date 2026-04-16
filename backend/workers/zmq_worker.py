@@ -1,7 +1,6 @@
 """Simple ZeroMQ worker used to test incoming messages."""
 
 import json
-import os
 from pathlib import Path
 
 import zmq
@@ -32,10 +31,11 @@ def main() -> None:
                 try:
                     metadata_json = metadata_bytes.decode("utf-8")
                     metadata = json.loads(metadata_json)
+                    session_id = metadata.get("session_id", "unknown_session")
                     frame_id = metadata.get("frame_id", "unknown")
 
                     print(f"[ZMQ Worker] Raw metadata JSON: {metadata_json}")
-                    print(f"[ZMQ Worker] session_id: {metadata.get('session_id')}")
+                    print(f"[ZMQ Worker] session_id: {session_id}")
                     print(f"[ZMQ Worker] device_id: {metadata.get('device_id')}")
                     print(f"[ZMQ Worker] frame_id: {frame_id}")
                     print(f"[ZMQ Worker] timestamp: {metadata.get('timestamp')}")
@@ -44,12 +44,15 @@ def main() -> None:
                     print(f"[ZMQ Worker] image byte length: {len(image_bytes)}")
 
                     try:
-                        output_dir = Path(__file__).resolve().parent / "output"
+                        # Group received frames by session to mirror backend storage.
+                        output_dir = Path(__file__).resolve().parent / "output" / session_id
                         output_dir.mkdir(parents=True, exist_ok=True)
-                        output_path = os.path.join(output_dir, f"received_frame_{frame_id}.jpg")
-                        Path(output_path).write_bytes(image_bytes)
+                        output_path = output_dir / f"frame_{frame_id}.jpg"
+                        output_path.write_bytes(image_bytes)
+                        print(f"[ZMQ Worker] Output directory: {output_dir}")
+                        print(f"[ZMQ Worker] Output path: {output_path}")
+                        print(f"[ZMQ Worker] Saved session_id: {session_id}")
                         print(f"[ZMQ Worker] Saved frame_id: {frame_id}")
-                        print(f"[ZMQ Worker] Saved image to {output_path}")
                         print(f"[ZMQ Worker] Saved bytes length: {len(image_bytes)}")
                     except OSError as exc:
                         print(f"[ZMQ Worker] Error writing image file: {exc}")
