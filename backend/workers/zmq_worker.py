@@ -27,14 +27,34 @@ def get_pose_inference_runner() -> Callable[[str, str | None], dict]:
     return _RUN_POSE_INFERENCE
 
 
-def run_pose_for_saved_frame(input_path: Path, session_id: str, frame_id: str) -> None:
+def save_result_json(result_payload: dict, result_json_path: Path) -> None:
+    """Persist inference metadata for a processed frame without crashing the worker."""
+    try:
+        with result_json_path.open("w", encoding="utf-8") as result_file:
+            json.dump(result_payload, result_file, indent=2, ensure_ascii=False)
+
+        print(f"[ZMQ Worker] JSON result path: {result_json_path}")
+        print(f"[ZMQ Worker] JSON success: {result_payload.get('success', False)}")
+        print(f"[ZMQ Worker] JSON num_detections: {result_payload.get('num_detections', 0)}")
+    except Exception as exc:
+        print(f"[ZMQ Worker] Error writing result JSON file: {exc}")
+
+
+def run_pose_for_saved_frame(input_path: Path, session_id: str, frame_id: str, metadata: dict) -> None:
     """Run pose inference for a saved frame without interrupting the worker loop."""
     results_dir = WORKER_DIR / "results" / session_id
     results_dir.mkdir(parents=True, exist_ok=True)
     result_path = results_dir / f"frame_{frame_id}_pose.jpg"
+    result_json_path = results_dir / f"frame_{frame_id}_result.json"
 
     print(f"[ZMQ Worker] Pose input frame path: {input_path}")
     print(f"[ZMQ Worker] Pose output result path: {result_path}")
+
+    result = {
+        "success": False,
+        "num_detections": 0,
+        "output_path": None,
+    }
 
     try:
         pose_inference_runner = get_pose_inference_runner()
@@ -43,7 +63,23 @@ def run_pose_for_saved_frame(input_path: Path, session_id: str, frame_id: str) -
         if not result.get("success", False):
             print("[ZMQ Worker] Warning: pose inference returned success=False.")
     except Exception as exc:
+        result["error"] = str(exc)
         print(f"[ZMQ Worker] Error during pose inference: {exc}")
+
+    result_payload = {
+        "session_id": session_id,
+        "frame_id": frame_id,
+        "device_id": metadata.get("device_id"),
+        "filename": metadata.get("filename"),
+        "timestamp": metadata.get("timestamp"),
+        "message_type": metadata.get("message_type"),
+        "input_path": str(input_path),
+        "pose_output_path": str(result_path),
+        "success": result.get("success", False),
+        "num_detections": result.get("num_detections", 0),
+        "inference_result": result,
+    }
+    save_result_json(result_payload, result_json_path)
 
 
 def main() -> None:
@@ -94,7 +130,7 @@ def main() -> None:
                         print(f"[ZMQ Worker] Saved session_id: {session_id}")
                         print(f"[ZMQ Worker] Saved frame_id: {frame_id}")
                         print(f"[ZMQ Worker] Saved bytes length: {len(image_bytes)}")
-                        run_pose_for_saved_frame(output_path, session_id, frame_id)
+                        run_pose_for_saved_frame(output_path, session_id, frame_id, metadata)
                     except OSError as exc:
                         print(f"[ZMQ Worker] Error writing image file: {exc}")
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
