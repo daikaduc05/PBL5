@@ -12,10 +12,6 @@ RESULTS_ROOT = BACKEND_ROOT / "workers" / "results"
 FRAME_FILE_PATTERN = re.compile(r"^frame_(\d+)_(pose\.jpg|result\.json)$")
 
 
-def _to_relative_path(path: Path) -> str:
-    return path.relative_to(BACKEND_ROOT).as_posix()
-
-
 def _get_session_dir(session_id: str) -> Path:
     session_dir = RESULTS_ROOT / session_id
     if not session_dir.exists() or not session_dir.is_dir():
@@ -23,8 +19,8 @@ def _get_session_dir(session_id: str) -> Path:
     return session_dir
 
 
-def _collect_frame_ids(session_dir: Path) -> list[int]:
-    frame_ids: set[int] = set()
+def _collect_frame_files(session_dir: Path) -> dict[int, dict[str, Path | None]]:
+    frames: dict[int, dict[str, Path | None]] = {}
 
     for file_path in session_dir.iterdir():
         if not file_path.is_file():
@@ -34,9 +30,36 @@ def _collect_frame_ids(session_dir: Path) -> list[int]:
         if match is None:
             continue
 
-        frame_ids.add(int(match.group(1)))
+        frame_id = int(match.group(1))
+        frame_entry = frames.setdefault(
+            frame_id,
+            {
+                "pose_image_path": None,
+                "result_json_path": None,
+            },
+        )
 
-    return sorted(frame_ids)
+        if file_path.name.endswith("_pose.jpg"):
+            frame_entry["pose_image_path"] = file_path
+        else:
+            frame_entry["result_json_path"] = file_path
+
+    return dict(sorted(frames.items()))
+
+
+def _to_backend_relative_path(file_path: Path | None) -> str | None:
+    if file_path is None:
+        return None
+
+    return file_path.relative_to(BACKEND_ROOT).as_posix()
+
+
+def _build_pose_image_url(pose_image_path: Path | None) -> str | None:
+    if pose_image_path is None:
+        return None
+
+    static_path = pose_image_path.relative_to(RESULTS_ROOT).as_posix()
+    return f"/static/results/{static_path}"
 
 
 @router.get("/sessions")
@@ -53,16 +76,17 @@ def list_result_sessions() -> dict[str, list[str]]:
 
 
 @router.get("/{session_id}")
-def list_session_results(session_id: str) -> dict[str, str | list[dict[str, int | str]]]:
+def list_session_results(session_id: str) -> dict[str, str | list[dict[str, int | str | None]]]:
     session_dir = _get_session_dir(session_id)
     frames = []
 
-    for frame_id in _collect_frame_ids(session_dir):
+    for frame_id, file_paths in _collect_frame_files(session_dir).items():
         frames.append(
             {
                 "frame_id": frame_id,
-                "pose_image_path": _to_relative_path(session_dir / f"frame_{frame_id}_pose.jpg"),
-                "result_json_path": _to_relative_path(session_dir / f"frame_{frame_id}_result.json"),
+                "pose_image_path": _to_backend_relative_path(file_paths["pose_image_path"]),
+                "result_json_path": _to_backend_relative_path(file_paths["result_json_path"]),
+                "pose_image_url": _build_pose_image_url(file_paths["pose_image_path"]),
             }
         )
 

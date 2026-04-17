@@ -1,0 +1,18 @@
+{
+  "session_id": "sess_video_20260401_230653",
+  "frame_id": "1",
+  "device_id": "manual-test",
+  "filename": "frame_1.jpg",
+  "timestamp": "2026-04-17T00:00:00",
+  "message_type": "test",
+  "input_path": "backend\\workers\\output\\sess_video_20260401_230653\\frame_1.jpg",
+  "pose_output_path": "D:\\TaiLieuNam3_DUT\\HKII\\PBL5\\PBL5\\backend\\workers\\results\\sess_video_20260401_230653\\frame_1_pose.jpg",
+  "success": false,
+  "num_detections": 0,
+  "inference_result": {
+    "success": false,
+    "num_detections": 0,
+    "output_path": null,
+    "error": "No module named 'torch'"
+  }
+}

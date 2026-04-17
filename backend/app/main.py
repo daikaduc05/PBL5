@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes.device import router as device_router
 from app.api.routes.health import router as health_router
@@ -11,6 +14,10 @@ from app.models.session import SessionModel
 
 
 Base.metadata.create_all(bind=engine)
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+RESULTS_STATIC_ROOT = BACKEND_ROOT / "workers" / "results"
+RESULTS_STATIC_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 app = FastAPI(
@@ -30,6 +37,7 @@ def read_root() -> dict:
     }
 
 
+app.mount("/static/results", StaticFiles(directory=RESULTS_STATIC_ROOT), name="result-static")
 app.include_router(health_router, prefix="/api")
 app.include_router(session_router, prefix="/api")
 app.include_router(device_router, prefix="/api")

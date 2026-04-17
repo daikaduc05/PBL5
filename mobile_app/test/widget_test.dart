@@ -84,20 +84,20 @@ void main() {
 
     await tester.ensureVisible(find.text('View Results'));
     await tester.tap(find.text('View Results'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
 
     expect(find.text('Pose Result'), findsOneWidget);
-    expect(find.text('Detected Keypoints'), findsOneWidget);
-    expect(find.text('Session ID'), findsOneWidget);
-    expect(find.text('Analysis Summary'), findsOneWidget);
+    expect(find.text('OPEN HISTORY'), findsAtLeastNWidgets(1));
 
-    await tester.ensureVisible(find.text('History'));
+    await tester.ensureVisible(find.text('OPEN HISTORY'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('History'));
-    await tester.pumpAndSettle();
+    await tester.tap(find.text('OPEN HISTORY'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
 
     expect(find.text('History'), findsOneWidget);
-    expect(find.text('Session Timeline'), findsOneWidget);
+    expect(find.text('REFRESH SESSIONS'), findsOneWidget);
 
     await tester.ensureVisible(find.text('BACK TO HOME'));
     await tester.pumpAndSettle();
@@ -109,7 +109,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Settings'), findsOneWidget);
-    expect(find.text('Network Endpoints'), findsOneWidget);
+    expect(find.text('Connection Endpoints'), findsOneWidget);
     expect(find.text('SAVE SETTINGS'), findsOneWidget);
   });
 }

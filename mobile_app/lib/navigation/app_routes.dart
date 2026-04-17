@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/backend_results_service.dart';
 import '../services/mock_pose_tracking_service.dart';
 import '../screens/capture_control_screen.dart';
 import '../screens/device_connection_screen.dart';
@@ -45,6 +46,7 @@ class AppRoutes {
         return MaterialPageRoute(
           builder: (_) => ResultScreen(
             initialResult: result is PoseAnalysisResult ? result : null,
+            sessionArgs: result is ResultScreenArgs ? result : null,
           ),
         );
       case history:
