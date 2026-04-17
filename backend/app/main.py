@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from app.api.routes.device import router as device_router
 from app.api.routes.health import router as health_router
+from app.api.routes.result import router as result_router
 from app.api.routes.session import router as session_router
 from app.core.database import Base, engine
 from app.models.device import DeviceModel
@@ -32,3 +33,4 @@ def read_root() -> dict:
 app.include_router(health_router, prefix="/api")
 app.include_router(session_router, prefix="/api")
 app.include_router(device_router, prefix="/api")
+app.include_router(result_router, prefix="/api")
