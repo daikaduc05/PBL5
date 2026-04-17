@@ -161,7 +161,7 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
 
     Navigator.of(
       context,
-    ).pushReplacementNamed(AppRoutes.results, arguments: result);
+    ).pushReplacementNamed(AppRoutes.captureResult, arguments: result);
   }
 
   IconData _iconForStage(int index) {

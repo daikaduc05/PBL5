@@ -1,3 +1,4 @@
+import '../config/backend_config.dart';
 import '../utils/app_formatters.dart';
 
 enum CaptureMode { image, video }
@@ -177,7 +178,7 @@ class MockPoseTrackingService {
 
   PoseTrackSettings _settings = const PoseTrackSettings(
     raspberryPiIp: '192.168.1.24',
-    serverAddress: '192.168.1.10:8000',
+    serverAddress: BackendConfig.defaultServerAddress,
     defaultMode: CaptureMode.video,
     defaultDurationSeconds: 10,
     autoUpload: true,

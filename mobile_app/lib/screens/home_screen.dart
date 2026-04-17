@@ -29,13 +29,13 @@ class HomeScreen extends StatelessWidget {
     ),
     _DashboardAction(
       title: 'View Results',
-      subtitle: 'Inspect recent pose outputs',
+      subtitle: 'Browse processed backend sessions',
       icon: Icons.analytics_rounded,
-      route: AppRoutes.results,
+      route: AppRoutes.resultSessions,
     ),
     _DashboardAction(
       title: 'History',
-      subtitle: 'Browse previous sessions',
+      subtitle: 'Open the archived results browser',
       icon: Icons.history_rounded,
       route: AppRoutes.history,
     ),
