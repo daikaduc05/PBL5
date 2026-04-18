@@ -524,6 +524,71 @@ def decode_heatmaps(
     return coords
 
 
+# COCO-17 keypoint indices used by the pose model
+KP_R_SHOULDER = 6
+KP_L_SHOULDER = 5
+KP_R_HIP = 12
+KP_L_HIP = 11
+KP_R_KNEE = 14
+KP_L_KNEE = 13
+KP_R_ANKLE = 16
+KP_L_ANKLE = 15
+
+
+def calculate_angle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
+    a = np.asarray(a, dtype=np.float32)
+    b = np.asarray(b, dtype=np.float32)
+    c = np.asarray(c, dtype=np.float32)
+    radians = np.arctan2(c[1] - b[1], c[0] - b[0]) - np.arctan2(a[1] - b[1], a[0] - b[0])
+    angle = float(np.abs(radians * 180.0 / np.pi))
+    if angle > 180.0:
+        angle = 360.0 - angle
+    return angle
+
+
+def compute_squat_angles(keypoints: np.ndarray) -> dict[str, float]:
+    shoulder = keypoints[KP_R_SHOULDER]
+    hip = keypoints[KP_R_HIP]
+    knee = keypoints[KP_R_KNEE]
+    ankle = keypoints[KP_R_ANKLE]
+    return {
+        "knee": round(calculate_angle(hip, knee, ankle), 2),
+        "hip": round(calculate_angle(shoulder, hip, knee), 2),
+    }
+
+
+class SquatTracker:
+    """Counts squat reps and tracks min/max joint angles per rep."""
+
+    def __init__(self, up_threshold: float = 169.0, down_threshold: float = 90.0) -> None:
+        self.up_threshold = up_threshold
+        self.down_threshold = down_threshold
+        self.counter = 0
+        self.stage: str | None = None
+        self._knee_window: list[float] = []
+        self._hip_window: list[float] = []
+        self.last_min_knee = 0.0
+        self.last_max_knee = 0.0
+        self.last_min_hip = 0.0
+        self.last_max_hip = 0.0
+
+    def update(self, knee_angle: float, hip_angle: float) -> None:
+        self._knee_window.append(knee_angle)
+        self._hip_window.append(hip_angle)
+
+        if knee_angle > self.up_threshold:
+            self.stage = "up"
+        if knee_angle <= self.down_threshold and self.stage == "up":
+            self.stage = "down"
+            self.counter += 1
+            self.last_min_knee = min(self._knee_window)
+            self.last_max_knee = max(self._knee_window)
+            self.last_min_hip = min(self._hip_window)
+            self.last_max_hip = max(self._hip_window)
+            self._knee_window.clear()
+            self._hip_window.clear()
+
+
 def visualize_pose(
     image: str | Path | np.ndarray,
     results: list[dict[str, Any]],
@@ -583,6 +648,19 @@ def visualize_pose(
             1,
         )
 
+        angles = result.get("angles")
+        if angles is not None:
+            knee_pt = tuple(keypoints[KP_R_KNEE].astype(int))
+            hip_pt = tuple(keypoints[KP_R_HIP].astype(int))
+            cv2.putText(
+                canvas, f"{angles['knee']:.0f}", knee_pt,
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA,
+            )
+            cv2.putText(
+                canvas, f"{angles['hip']:.0f}", hip_pt,
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA,
+            )
+
     if save_path is not None:
         save_image(canvas, save_path)
 
@@ -608,7 +686,11 @@ def predict_pose_for_crops(
 
         heatmaps = output.squeeze(0).detach().cpu().numpy()
         keypoints = decode_heatmaps(heatmaps, crop["center"], crop["scale"])
-        results.append({"bbox": crop["bbox"], "keypoints": keypoints})
+        results.append({
+            "bbox": crop["bbox"],
+            "keypoints": keypoints,
+            "angles": compute_squat_angles(keypoints),
+        })
 
     return results
 
@@ -684,6 +766,7 @@ def run_camera_demo(
     frame_count = 0
     last_results: list[dict[str, Any]] = []
     last_fps = 0.0
+    tracker = SquatTracker()
 
     try:
         while True:
@@ -714,23 +797,26 @@ def run_camera_demo(
                 results = last_results
                 vis = visualize_pose(frame, last_results) if last_results else frame.copy()
 
+            if results and "angles" in results[0]:
+                a = results[0]["angles"]
+                tracker.update(a["knee"], a["hip"])
+
+            cv2.rectangle(vis, (10, 65), (360, 195), (0, 0, 0), -1)
             cv2.putText(
-                vis,
-                f"FPS: {last_fps:.1f}",
-                (10, 25),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0),
-                2,
+                vis, f"Reps: {tracker.counter}  ({tracker.stage or '-'})",
+                (20, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA,
             )
             cv2.putText(
-                vis,
-                f"Detections: {len(results)}",
-                (10, 50),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (0, 255, 255),
-                1,
+                vis, f"Knee min: {tracker.last_min_knee:.1f}",
+                (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA,
+            )
+            cv2.putText(
+                vis, f"Hip  min: {tracker.last_min_hip:.1f}",
+                (20, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA,
+            )
+            cv2.putText(
+                vis, f"FPS: {last_fps:.1f}  Det: {len(results)}",
+                (20, 185), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA,
             )
 
             cv2.imshow(window_name, vis)
