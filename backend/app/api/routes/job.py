@@ -12,7 +12,7 @@ from app.schemas.job import (
 )
 from app.services.job_service import create_job, get_job_by_id
 from app.services.media_service import get_media_by_id
-from app.services.session_service import get_session_by_id
+from app.services.session_service import build_session_key, get_session_by_id
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
 
@@ -50,6 +50,8 @@ def create_job_route(
         message="Job created successfully",
         data=JobCreateResponse(
             job_id=job.id,
+            session_id=job.session_id,
+            session_key=build_session_key(job.session_id),
             status=job.status,
             progress=job.progress,
         ),
@@ -71,6 +73,7 @@ def get_job_status_route(
         data=JobStatusResponse(
             job_id=job.id,
             session_id=job.session_id,
+            session_key=build_session_key(job.session_id),
             media_id=job.media_id,
             device_id=job.device_id,
             task_type=job.task_type,

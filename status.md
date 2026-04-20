@@ -2,218 +2,227 @@
 
 ## 1. Tổng quan trạng thái hiện tại
 
-Dự án hiện đã hoàn thành được **phần lõi kỹ thuật quan trọng nhất**: truyền dữ liệu từ Raspberry Pi sang backend, chạy model AI, và sinh kết quả pose estimation.
-
-Nói ngắn gọn:
+Dự án hiện đã chạy được **pipeline xử lý pose estimation thật** từ Raspberry Pi sang backend:
 
 ```text
-Raspberry Pi -> Backend -> Model -> Result
+Pi -> ZeroMQ Worker -> Model -> Result Files -> Results API
 ```
 
-đã chạy được.
+Backend cũng đã được khóa lại thêm một lớp điều phối quan trọng:
 
-Tuy nhiên, hệ thống vẫn **chưa hoàn thiện full flow điều khiển từ mobile app**.
-Hiện tại project đang ở giai đoạn chuyển từ **pipeline xử lý hoạt động** sang **pipeline điều phối hoàn chỉnh**.
+* session hiện có **public session key** dùng xuyên suốt cho Pi/worker/result
+* command lifecycle hiện có các trạng thái rõ ràng:
+
+  * `pending`
+  * `acknowledged`
+  * `running`
+  * `completed`
+  * `failed`
+
+Điểm nghẽn hiện tại không còn nằm chủ yếu ở backend worker nữa, mà nằm ở **việc nối mobile app sang flow thật**.
 
 ---
 
 ## 2. Những phần đã hoàn thành
 
-### 2.1. Raspberry Pi ↔ Backend communication
+### 2.1. Pi ↔ Backend data pipeline
 
-* Raspberry Pi đã gửi được frame thật sang backend qua ZeroMQ
-* Backend worker đã nhận được frame thành công
-* Hệ thống đã test được cả:
+* Raspberry Pi gửi được frame thật qua ZeroMQ
+* backend worker nhận được multipart message
+* worker lưu frame gốc theo session
+* worker chạy model pose estimation
+* worker sinh ảnh pose và JSON result
 
-  * gửi 1 frame
-  * gửi nhiều frame
-  * gửi frame theo session
-  * gửi từ folder frame cắt ra từ video
+### 2.2. Results API
 
-### 2.2. Backend worker processing
-
-* `zmq_worker.py` đã:
-
-  * nhận multipart message
-  * parse metadata JSON
-  * lưu frame gốc
-  * gọi model inference
-  * sinh ảnh pose output
-  * sinh JSON result cho từng frame
-
-### 2.3. Model AI integration
-
-* `core_model/inference.py` đã được refactor để backend có thể import và gọi trực tiếp
-* Model AI hiện đã chạy được từ worker backend
-* Output pose estimation đã được lưu thành file thật
-
-### 2.4. Result generation
-
-Mỗi frame hiện tại đã có thể sinh ra:
-
-* ảnh gốc
-* ảnh pose
-* file JSON result
-
-Ví dụ:
+Backend đã đọc được dữ liệu kết quả thật từ thư mục:
 
 ```text
-workers/output/<session_id>/frame_1.jpg
-workers/results/<session_id>/frame_1_pose.jpg
-workers/results/<session_id>/frame_1_result.json
+workers/results/<session_key>/
 ```
 
-### 2.5. Backend API nền tảng
+và trả ra cho app qua:
 
-Backend hiện đã có các nhóm API chính:
+* `GET /api/results/sessions`
+* `GET /api/results/{session_key}`
+* `GET /api/results/{session_key}/{frame_id}`
 
-* device
-* session
-* results
+### 2.3. Session contract đã được chuẩn hóa
 
-Điều này tạo nền tảng để app mobile có thể:
+Backend hiện đã có session theo 2 lớp:
 
-* đọc session
-* đọc frame result
-* đọc JSON result
-* hiển thị ảnh pose
+* `session_id`: khóa số trong database
+* `session_key`: khóa public dạng chuỗi để Pi, worker và Results API cùng dùng
+
+Điều này giúp tách rõ:
+
+* quan hệ DB nội bộ
+* định danh public dùng cho folder result và luồng xử lý ngoài DB
+
+### 2.4. Command lifecycle đã được khóa lại
+
+Backend và Pi agent hiện đã có lifecycle rõ hơn:
+
+* khi Pi poll command, backend **claim command** và đổi sang `acknowledged`
+* khi Pi bắt đầu xử lý, Pi cập nhật `running`
+* khi xong, Pi cập nhật `completed` hoặc `failed`
+* backend dùng `executed_at` để ghi nhận lúc command được bắt đầu xử lý
+
+Ngoài ra, command đang ở `acknowledged` hoặc `running` quá lâu có thể được phát lại sau timeout để tránh kẹt vĩnh viễn.
+
+### 2.5. Pi agent đã theo contract mới
+
+Pi agent hiện đã:
+
+* poll command đã được claim từ backend
+* đọc được `session_key`
+* cập nhật `running`
+* cập nhật `completed` hoặc `failed`
+
+### 2.6. Job / History response đã mang session key
+
+Các API `jobs` và `history` hiện đã trả thêm `session_key`, giúp về sau app có thể nối từ history/job sang result session mà không cần đoán tên folder.
 
 ---
 
 ## 3. Những phần đang làm
 
-### 3.1. Pi Agent / Command orchestration
+### 3.1. Backend orchestration layer
 
-Hiện tại Raspberry Pi đã có agent polling backend:
+Phần backend core cho điều phối đã tiến thêm một bước, nhưng vẫn còn dang dở ở chỗ:
 
-* heartbeat OK
-* pending command OK
-* nhận được command thật từ backend
+* `jobs` hiện vẫn là stub progress giả
+* `history` chưa trỏ thẳng vào result session cụ thể
+* flow giữa `job` và `results` chưa được đóng kín hoàn toàn
 
-Pi agent cũng đã có thể:
+### 3.2. Mobile app integration
 
-* nhận lệnh `start_recording`
-* parse `command_payload`
-* tự gọi `pi_zmq_sender.py`
+Flutter hiện vẫn đang ở trạng thái nửa thật nửa mock:
 
-Tuy nhiên, phần **command lifecycle** vẫn đang được hoàn thiện:
-
-* command sau khi xử lý xong chưa được acknowledge hoàn chỉnh
-* dẫn tới nguy cơ command bị lặp lại nhiều lần
-
-### 3.2. End-to-end control flow
-
-Hiện tại hệ thống vẫn đang hơi thủ công:
-
-* tạo command bằng Swagger / backend docs
-* chạy Pi agent bằng terminal
-* quan sát worker bằng terminal
-
-Tức là **luồng điều khiển từ app xuống Pi chưa được đóng kín hoàn toàn**.
+* `Result Sessions` và một phần `History` đã chạm backend
+* `Connect`, `Capture`, `Processing` vẫn chủ yếu dùng mock service
 
 ---
 
 ## 4. Những phần chưa hoàn thành
 
-### 4.1. Full mobile app orchestration
+### 4.1. Full end-to-end app orchestration
 
-App Flutter hiện chưa điều khiển toàn bộ flow:
+App chưa đi trọn flow thật:
 
-* Connect thật với backend status
-* Start Capture thật
-* Trigger Pi capture thật
-* Theo dõi Processing thật
-* Xem Result / History bằng dữ liệu thật
+```text
+Connect -> Capture -> Processing -> Result -> History
+```
 
-### 4.2. Command status lifecycle
+theo backend/Pi thật.
 
-Cần hoàn thiện:
+### 4.2. Connect screen gọi API thật
 
-* command `pending`
-* command `completed`
-* command `failed`
+Màn Connect vẫn chưa đọc trực tiếp:
 
-để tránh Pi agent xử lý lặp vô hạn.
+* backend health
+* device list / Pi online status
 
-### 4.3. Processing status flow
+### 4.3. Capture screen tạo session + command thật
 
-Màn hình Processing trong app hiện chưa gắn chặt với trạng thái xử lý thật từ backend.
+Màn Capture vẫn chưa thực hiện đầy đủ:
 
-### 4.4. Camera capture thật từ Pi
+* `POST /api/session/create`
+* `POST /api/devices/{device_id}/commands`
 
-Hiện tại Pi đang gửi frame từ folder frame cắt sẵn theo command payload `frames_dir`.
+### 4.4. Processing screen theo dõi tiến trình thật
 
-Đây là hợp lý để test flow.
-Nhưng để hoàn thiện hơn, sau này cần thêm mode:
+Màn Processing hiện vẫn là progress giả bằng timer, chưa polling backend theo command/result thật.
 
-* mở camera thật
-* capture theo thời lượng
-* gửi frame realtime
+### 4.5. Kết nối giữa History / Job / Result
+
+Hiện đã có `session_key` trong response, nhưng app vẫn chưa dùng khóa đó để mở đúng result session từ history/job.
+
+### 4.6. Camera thật trên Raspberry Pi
+
+Pi hiện vẫn phù hợp nhất cho mode test:
+
+* đọc frame từ folder
+* gửi qua ZeroMQ theo command payload
+
+Chưa phải luồng camera realtime hoàn chỉnh.
 
 ---
 
 ## 5. Dự án hiện đang đứng ở đâu?
 
-Nếu chia theo mức độ hoàn thành kỹ thuật:
-
 ### Đã xong
 
 * Core AI pipeline
-* Pi ↔ Backend data pipeline
-* Backend inference pipeline
-* Result generation pipeline
+* Pi -> backend worker -> result pipeline
+* Results API đọc file thật
+* Session public key contract
+* Command claim + lifecycle cơ bản giữa backend và Pi agent
 
 ### Đang làm
 
-* Pi agent command handling
-* Command acknowledgment lifecycle
-* Backend ↔ App ↔ Pi orchestration
+* Nối app Flutter sang backend thật
+* Gắn processing flow với trạng thái thật
+* Gắn history/job với result session thật
 
 ### Chưa xong
 
-* Full end-to-end mobile app integration
-* Processing flow thật
-* Control flow từ app đến camera Pi hoàn chỉnh
+* Full mobile end-to-end orchestration
+* Job pipeline thật thay cho stub
+* Camera Pi realtime flow
 
 ---
 
 ## 6. Trạng thái hiện tại theo 1 câu ngắn
 
 ```text
-Dự án đã chạy được phần xử lý AI từ Raspberry Pi tới backend và sinh kết quả; hiện đang hoàn thiện lớp điều phối để mobile app có thể điều khiển toàn bộ flow một cách tự động.
+Backend và Pi agent đã có contract session/command ổn định hơn; nút thắt hiện tại là nối Flutter vào flow thật thay cho các màn còn đang mock.
 ```
 
 ---
 
 ## 7. Bước tiếp theo gần nhất
 
-Bước cần làm ngay để không bị kẹt flow:
+Bước nên làm ngay bây giờ:
 
-### Fix command lifecycle
+### Nối Connect screen vào backend thật
 
-* Pi agent xử lý xong command phải báo backend cập nhật trạng thái
-* command không còn bị trả về liên tục dưới dạng `pending`
+* gọi `GET /api/health`
+* gọi `GET /api/devices`
+* hiển thị Pi online/offline theo heartbeat thật
 
-Sau khi bước này ổn, có thể chuyển sang:
+Sau đó nối tiếp:
 
-### Nối app Flutter với backend thật
+### Nối Capture screen vào session + command thật
 
-* đọc Results API
-* hiển thị Result / History
-* sau đó nối Connect / Capture / Processing thật
+* tạo session từ backend
+* tạo command cho Pi với `session_id`
+* để backend tự gắn `session_key` vào command payload
+
+Sau khi 2 bước này ổn, mới sang:
+
+### Nối Processing screen vào status/result thật
+
+* polling command status
+* dò result session theo `session_key`
+* chuyển sang Result khi đã có output thật
 
 ---
 
 ## 8. Hướng đi tiếp theo sau đó
 
-1. Hoàn thiện command status update
-2. Flutter gọi Results API
-3. Flutter render pose image + result detail
-4. Flutter Connect screen gọi API status thật
-5. Flutter Capture screen tạo session + command thật
-6. Pi agent nhận lệnh và tự gửi frame
-7. App đi đúng full flow:
+1. Flutter Connect screen gọi API thật
+2. Flutter Capture screen tạo session + command thật
+3. Pi agent nhận lệnh và gửi frame theo `session_key`
+4. Flutter Processing screen theo dõi trạng thái thật
+5. Flutter Result / History mở đúng result session thật
+6. Gộp các results client trùng nhau trong app
+7. Thay job stub bằng processing pipeline thật nếu cần
+
+---
+
+## 9. Tóm tắt dễ nhớ
 
 ```text
-Splash -> Home -> Connect -> Capture -> Processing -> Result -> History
+Phần worker/model/results đã chạy ổn; backend vừa được khóa thêm session key và command lifecycle; bước kế tiếp là bỏ mock ở Flutter và nối app vào flow thật.
 ```

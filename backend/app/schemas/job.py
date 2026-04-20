@@ -18,6 +18,8 @@ class JobCreateRequest(BaseModel):
 
 class JobCreateResponse(BaseModel):
     job_id: int
+    session_id: int
+    session_key: str
     status: JobStatus
     progress: int
 
@@ -29,6 +31,7 @@ class JobCreateApiResponse(ApiResponse):
 class JobStatusResponse(BaseModel):
     job_id: int
     session_id: int
+    session_key: str
     media_id: int
     device_id: int | None
     task_type: str
@@ -46,6 +49,8 @@ class JobStatusApiResponse(ApiResponse):
 
 class HistoryItemResponse(BaseModel):
     job_id: int
+    session_id: int
+    session_key: str
     status: JobStatus
     task_type: str
     progress: int
@@ -58,6 +63,8 @@ class HistoryListApiResponse(ApiResponse):
 
 class HistoryDetailResponse(BaseModel):
     job_id: int
+    session_id: int
+    session_key: str
     status: JobStatus
     task_type: str
     progress: int

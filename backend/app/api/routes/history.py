@@ -10,6 +10,7 @@ from app.schemas.job import (
     HistoryListApiResponse,
 )
 from app.services.job_service import get_job_by_id, list_jobs
+from app.services.session_service import build_session_key
 
 router = APIRouter(prefix="/history", tags=["History"])
 
@@ -30,6 +31,8 @@ def get_history_route(db: Session = Depends(get_db)) -> HistoryListApiResponse:
         data=[
             HistoryItemResponse(
                 job_id=job.id,
+                session_id=job.session_id,
+                session_key=build_session_key(job.session_id),
                 status=job.status,
                 task_type=job.task_type,
                 progress=job.progress,
@@ -54,6 +57,8 @@ def get_history_detail_route(
         message="Job detail retrieved successfully",
         data=HistoryDetailResponse(
             job_id=job.id,
+            session_id=job.session_id,
+            session_key=build_session_key(job.session_id),
             status=job.status,
             task_type=job.task_type,
             progress=job.progress,

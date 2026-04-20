@@ -5,8 +5,15 @@ from sqlalchemy.orm import Session
 from app.models.session import SessionModel
 
 
+SESSION_KEY_PREFIX = "sess"
+
+
 def _generate_session_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+def build_session_key(session_id: int) -> str:
+    return f"{SESSION_KEY_PREFIX}_{session_id:06d}"
 
 
 def create_session(db: Session) -> SessionModel:

@@ -71,11 +71,11 @@ def send_heartbeat(backend: str, device_id: int) -> None:
 
 def fetch_pending_command(backend: str, device_id: int) -> dict | None:
     data = api("GET", backend, f"/api/devices/{device_id}/commands/pending")
-    return data.get("data")  # None nếu không có pending command
+    return data.get("data")  # None nếu không có dispatchable command
 
 
-def ack_command(backend: str, device_id: int, command_id: int, status: str) -> None:
-    """Báo backend trạng thái command sau khi thực thi."""
+def update_command_status(backend: str, device_id: int, command_id: int, status: str) -> None:
+    """Báo backend trạng thái command trong lifecycle xử lý."""
     api(
         "PATCH",
         backend,
@@ -87,8 +87,32 @@ def ack_command(backend: str, device_id: int, command_id: int, status: str) -> N
 
 # ── Command handlers ──────────────────────────────────────────────────────────
 
-def handle_start_recording(command_id: int, payload_str: str | None, backend: str, device_id: int) -> None:
+def _resolve_session_key(command: dict, payload: dict) -> str:
+    payload_session_key = payload.get("session_key")
+    if payload_session_key:
+        return str(payload_session_key)
+
+    payload_session_id = payload.get("session_id")
+    if payload_session_id:
+        return str(payload_session_id)
+
+    command_session_key = command.get("session_key")
+    if command_session_key:
+        return str(command_session_key)
+
+    command_session_id = command.get("session_id")
+    if command_session_id is not None:
+        return f"sess_{int(command_session_id):06d}"
+
+    return "default_session"
+
+
+def handle_start_recording(command: dict, backend: str, device_id: int) -> None:
+    command_id: int = command["command_id"]
+    payload_str: str | None = command.get("command_payload")
+
     log(f"Executing start_recording (command_id={command_id})")
+    update_command_status(backend, device_id, command_id, "running")
 
     try:
         payload: dict = json.loads(payload_str) if payload_str else {}
@@ -98,11 +122,11 @@ def handle_start_recording(command_id: int, payload_str: str | None, backend: st
     frames_dir: str | None = payload.get("frames_dir")
     zmq_host: str = payload.get("zmq_host", "localhost")
     zmq_port: int = int(payload.get("zmq_port", 5555))
-    session_id: str = payload.get("session_id", "default_session")
+    session_key = _resolve_session_key(command, payload)
 
     if frames_dir is None:
         log("  [WARN] frames_dir not in payload — skipping ZMQ send")
-        ack_command(backend, device_id, command_id, "failed")
+        update_command_status(backend, device_id, command_id, "failed")
         return
 
     # Gọi pi_zmq_sender.py nếu tồn tại, hoặc implement trực tiếp bên dưới
@@ -114,24 +138,24 @@ def handle_start_recording(command_id: int, payload_str: str | None, backend: st
             "--frames-dir", frames_dir,
             "--host", zmq_host,
             "--port", str(zmq_port),
-            "--session-id", session_id,
+            "--session-id", session_key,
         ]
         log(f"  Running: {' '.join(cmd)}")
         result = subprocess.run(cmd, timeout=120)
         if result.returncode == 0:
-            ack_command(backend, device_id, command_id, "completed")
+            update_command_status(backend, device_id, command_id, "completed")
         else:
             log(f"  [ERROR] pi_zmq_sender exited with code {result.returncode}")
-            ack_command(backend, device_id, command_id, "failed")
+            update_command_status(backend, device_id, command_id, "failed")
     else:
         # Fallback: gửi thẳng qua ZMQ nếu có thư viện
         log(f"  pi_zmq_sender.py not found, attempting inline ZMQ send...")
         try:
-            _inline_zmq_send(frames_dir, zmq_host, zmq_port, session_id)
-            ack_command(backend, device_id, command_id, "completed")
+            _inline_zmq_send(frames_dir, zmq_host, zmq_port, session_key)
+            update_command_status(backend, device_id, command_id, "completed")
         except Exception as exc:
             log(f"  [ERROR] Inline ZMQ send failed: {exc}")
-            ack_command(backend, device_id, command_id, "failed")
+            update_command_status(backend, device_id, command_id, "failed")
 
 
 def _inline_zmq_send(frames_dir: str, host: str, port: int, session_id: str) -> None:
@@ -167,21 +191,23 @@ def _inline_zmq_send(frames_dir: str, host: str, port: int, session_id: str) -> 
 def handle_command(command: dict, backend: str, device_id: int) -> None:
     command_id: int = command["command_id"]
     command_type: str = command["command_type"]
-    payload_str: str | None = command.get("command_payload")
 
     log(f"Got command: type={command_type}, id={command_id}")
 
     if command_type == "start_recording":
-        handle_start_recording(command_id, payload_str, backend, device_id)
+        handle_start_recording(command, backend, device_id)
     elif command_type == "stop_recording":
+        update_command_status(backend, device_id, command_id, "running")
         log("  stop_recording: no action needed in this version")
-        ack_command(backend, device_id, command_id, "completed")
+        update_command_status(backend, device_id, command_id, "completed")
     elif command_type == "capture_photo":
+        update_command_status(backend, device_id, command_id, "running")
         log("  capture_photo: not implemented yet")
-        ack_command(backend, device_id, command_id, "failed")
+        update_command_status(backend, device_id, command_id, "failed")
     else:
+        update_command_status(backend, device_id, command_id, "running")
         log(f"  [WARN] Unknown command type: {command_type}")
-        ack_command(backend, device_id, command_id, "failed")
+        update_command_status(backend, device_id, command_id, "failed")
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
