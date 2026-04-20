@@ -135,6 +135,7 @@ class HistoryDetail {
   final DateTime createdAt;
   final DateTime? startedAt;
   final DateTime? finishedAt;
+  final Map<String, dynamic>? result;
 
   const HistoryDetail({
     required this.jobId,
@@ -147,6 +148,7 @@ class HistoryDetail {
     required this.createdAt,
     required this.startedAt,
     required this.finishedAt,
+    required this.result,
   });
 
   factory HistoryDetail.fromJson(Map<String, dynamic> json) => HistoryDetail(
@@ -164,6 +166,9 @@ class HistoryDetail {
         : null,
     finishedAt: json['finished_at'] != null
         ? DateTime.tryParse(json['finished_at'] as String)
+        : null,
+    result: json['result'] is Map<String, dynamic>
+        ? json['result'] as Map<String, dynamic>
         : null,
   );
 }

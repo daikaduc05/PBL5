@@ -40,6 +40,7 @@ pending -> acknowledged -> running -> completed | failed
 - `Processing` no longer finishes by mock finalize when backend ids are available.
 - Result screens now share one backend result source of truth through `ResultApi`.
 - `History` now opens the exact backend session via `session_key` instead of jumping to the generic results list.
+- Removed the old `BackendResultsService` compatibility shim after cleaning imports.
 - Fixed backend result contract mismatch:
 
 ```text
@@ -48,21 +49,20 @@ result_json_path vs result_json_url
 
 so the backend result screen can open sessions produced by the real flow.
 
-## What Is Still Not Done
+## Closed In This Snapshot
 
 ### Results Layer
 
-- `BackendResultsService` has been reduced to a compatibility shim.
 - The active result flow now uses `ResultApi` + `result_models.dart`.
 
 ### History
 
 - `History` now routes to the exact backend result session for each job item.
-- History detail still does not include attached result metadata from backend `history/{job_id}`.
+- Backend `history/{job_id}` now includes attached result-session metadata.
 
 ### Docs
 
-- `backend_api_spec.md` still needs to be updated to match the current `session_id/session_key` result flow.
+- `backend_api_spec.md` now matches the current `session_id/session_key` result flow.
 
 ## MVP Flow Today
 
@@ -72,11 +72,19 @@ Home -> Connect -> Capture -> Processing -> Result
 
 This flow is now backed by real API calls for the main orchestration path.
 
-## Recommended Next Task
+## Current Snapshot
 
-1. Update backend API documentation
-2. Attach result metadata to backend `history/{job_id}` detail
-3. Remove the compatibility shim once you are sure no old imports are needed
+The action items from the previous snapshot are now completed:
+
+1. backend API documentation updated
+2. backend `history/{job_id}` attaches result metadata
+3. old compatibility shim removed
+
+## Optional Next Improvements
+
+1. surface `history/{job_id}.result` in a dedicated mobile detail screen if needed
+2. replace the stub `/jobs` pipeline with the real worker orchestration path
+3. add Pi live-camera capture mode beyond folder replay
 
 ## Verification Done
 

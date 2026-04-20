@@ -10,6 +10,7 @@ from app.schemas.job import (
     HistoryListApiResponse,
 )
 from app.services.job_service import get_job_by_id, list_jobs
+from app.services.result_service import build_history_result_metadata
 from app.services.session_service import build_session_key
 
 router = APIRouter(prefix="/history", tags=["History"])
@@ -66,6 +67,6 @@ def get_history_detail_route(
             created_at=job.created_at,
             started_at=job.started_at,
             finished_at=job.finished_at,
-            result=None,  # Future: attach result overlay path when done
+            result=build_history_result_metadata(build_session_key(job.session_id)),
         ),
     )

@@ -1,16 +1,16 @@
-# Backend API Specification - PoseTrack
+# PoseTrack Backend API Specification
 
-## 1. Tổng quan
+## 1. Overview
 
 ### Base URL
 
 ```text
-http://localhost:8002/api
+http://<backend-host>:8002/api
 ```
 
-### Response format chung
+### Standard response shape
 
-Tất cả response nên theo format thống nhất:
+Most REST endpoints return:
 
 ```json
 {
@@ -20,11 +20,38 @@ Tất cả response nên theo format thống nhất:
 }
 ```
 
+### MVP orchestration flow
+
+The current MVP flow is:
+
+```text
+Mobile App
+  -> POST /session/create
+  -> GET /devices
+  -> POST /devices/{device_id}/commands
+Pi Agent
+  -> GET /devices/{device_id}/commands/pending
+  -> PATCH /devices/{device_id}/commands/{command_id}/status
+Worker
+  -> writes backend/workers/results/<session_key>
+Mobile App
+  -> GET /devices/{device_id}/commands/{command_id}
+  -> GET /results/{session_key}
+  -> GET /results/{session_key}/{frame_id}
+```
+
+`session_key` is the public session identifier shared across:
+
+- mobile app
+- Pi agent payloads
+- worker result directories
+- result/history APIs
+
 ## 2. Health API
 
 ### `GET /health`
 
-Kiểm tra backend có đang hoạt động hay không.
+Check whether the backend is reachable.
 
 **Response**
 
@@ -40,7 +67,7 @@ Kiểm tra backend có đang hoạt động hay không.
 
 ### `POST /session/create`
 
-Tạo session mới cho app.
+Create a new session for a capture run.
 
 **Response**
 
@@ -49,8 +76,11 @@ Tạo session mới cho app.
   "success": true,
   "message": "Session created successfully",
   "data": {
-    "session_id": 1,
-    "token": "abc123xyz"
+    "session_id": 12,
+    "session_key": "session_0012",
+    "token": "abc123xyz",
+    "status": "active",
+    "created_at": "2026-04-20T10:15:30.000000"
   }
 }
 ```
@@ -59,19 +89,22 @@ Tạo session mới cho app.
 
 ### `GET /devices`
 
-Lấy danh sách thiết bị.
+List registered devices and their resolved status.
 
 **Response**
 
 ```json
 {
   "success": true,
+  "message": "Devices retrieved successfully",
   "data": [
     {
       "id": 1,
       "device_name": "Raspberry Pi 4",
       "device_code": "pi-001",
-      "status": "online"
+      "status": "online",
+      "last_seen": "2026-04-20T10:16:11.000000",
+      "created_at": "2026-04-20T09:58:04.000000"
     }
   ]
 }
@@ -79,7 +112,7 @@ Lấy danh sách thiết bị.
 
 ### `POST /devices/register`
 
-Đăng ký thiết bị Raspberry Pi.
+Register a Raspberry Pi device.
 
 **Request**
 
@@ -95,6 +128,7 @@ Lấy danh sách thiết bị.
 ```json
 {
   "success": true,
+  "message": "Device registered successfully",
   "data": {
     "device_id": 1,
     "auth_token": "device_token",
@@ -105,7 +139,7 @@ Lấy danh sách thiết bị.
 
 ### `POST /devices/{device_id}/heartbeat`
 
-Cập nhật trạng thái thiết bị.
+Update device heartbeat status.
 
 **Request**
 
@@ -123,24 +157,41 @@ Cập nhật trạng thái thiết bị.
   "message": "Heartbeat updated",
   "data": {
     "device_id": 1,
-    "status": "online"
+    "status": "online",
+    "last_seen": "2026-04-20T10:16:11.000000"
   }
 }
 ```
 
 ## 5. Command API
 
+Command lifecycle currently follows:
+
+```text
+pending -> acknowledged -> running -> completed | failed
+```
+
 ### `POST /devices/{device_id}/commands`
 
-Gửi lệnh đến Pi.
+Create a command for the Pi agent.
 
 **Request**
 
 ```json
 {
-  "session_id": 1,
-  "command_type": "capture_photo",
-  "command_payload": "{\"resolution\":\"1280x720\"}"
+  "session_id": 12,
+  "command_type": "start_recording",
+  "command_payload": {
+    "session_id": 12,
+    "session_key": "session_0012",
+    "frames_dir": "/home/pi/posetrack/frames",
+    "zmq_host": "192.168.1.10",
+    "zmq_port": 5555,
+    "capture_mode": "video",
+    "target_duration_seconds": 10,
+    "actual_duration_seconds": 10,
+    "source": "mobile_app"
+  }
 }
 ```
 
@@ -149,8 +200,11 @@ Gửi lệnh đến Pi.
 ```json
 {
   "success": true,
+  "message": "Command created successfully",
   "data": {
-    "command_id": 10,
+    "command_id": 33,
+    "session_id": 12,
+    "session_key": "session_0012",
     "status": "pending"
   }
 }
@@ -158,18 +212,82 @@ Gửi lệnh đến Pi.
 
 ### `GET /devices/{device_id}/commands/pending`
 
-Pi polling để lấy lệnh đang chờ.
+Pi agent polling endpoint. The backend claims the oldest available command and
+returns it as `acknowledged`.
+
+**Response with command**
+
+```json
+{
+  "success": true,
+  "message": "Command claimed successfully",
+  "data": {
+    "command_id": 33,
+    "session_id": 12,
+    "session_key": "session_0012",
+    "command_type": "start_recording",
+    "command_payload": "{\"session_id\":12,\"session_key\":\"session_0012\",\"frames_dir\":\"/home/pi/posetrack/frames\"}",
+    "status": "acknowledged",
+    "created_at": "2026-04-20T10:17:02.000000",
+    "executed_at": "2026-04-20T10:17:05.000000"
+  }
+}
+```
+
+**Response when no command is available**
+
+```json
+{
+  "success": true,
+  "message": "No pending commands",
+  "data": null
+}
+```
+
+### `GET /devices/{device_id}/commands/{command_id}`
+
+Read the latest state of one command.
 
 **Response**
 
 ```json
 {
   "success": true,
+  "message": "Command status retrieved successfully",
   "data": {
-    "command_id": 10,
-    "command_type": "capture_photo",
-    "command_payload": "{\"resolution\":\"1280x720\"}",
-    "status": "pending"
+    "command_id": 33,
+    "session_id": 12,
+    "session_key": "session_0012",
+    "status": "running",
+    "executed_at": "2026-04-20T10:17:05.000000"
+  }
+}
+```
+
+### `PATCH /devices/{device_id}/commands/{command_id}/status`
+
+Update command state from the Pi agent.
+
+**Request**
+
+```json
+{
+  "status": "completed"
+}
+```
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Command status updated successfully",
+  "data": {
+    "command_id": 33,
+    "session_id": 12,
+    "session_key": "session_0012",
+    "status": "completed",
+    "executed_at": "2026-04-20T10:17:05.000000"
   }
 }
 ```
@@ -178,16 +296,16 @@ Pi polling để lấy lệnh đang chờ.
 
 ### `POST /media/upload`
 
-Upload ảnh hoặc video từ app hoặc Pi.
+Upload media from the mobile app or Raspberry Pi.
 
-**Form-data**
+**Form fields**
 
 | Field | Type | Example |
 | --- | --- | --- |
 | `file` | file | `image.jpg` |
 | `source_type` | string | `app` / `pi` |
 | `media_type` | string | `image` / `video` |
-| `session_id` | int | `1` |
+| `session_id` | int | `12` |
 | `device_id` | int | `1` |
 
 **Response**
@@ -195,10 +313,11 @@ Upload ảnh hoặc video từ app hoặc Pi.
 ```json
 {
   "success": true,
+  "message": "Media uploaded successfully",
   "data": {
     "media_id": 5,
-    "file_name": "abc.jpg",
-    "file_path": "storage/uploads/abc.jpg",
+    "file_name": "capture.jpg",
+    "file_path": "storage/uploads/capture.jpg",
     "media_type": "image"
   }
 }
@@ -206,16 +325,19 @@ Upload ảnh hoặc video từ app hoặc Pi.
 
 ## 7. Job API
 
+The `/jobs` endpoints still exist, but the current processing implementation is
+stubbed and not the main MVP orchestration path.
+
 ### `POST /jobs`
 
-Tạo job xử lý AI.
+Create a job record.
 
 **Request**
 
 ```json
 {
   "media_id": 5,
-  "session_id": 1,
+  "session_id": 12,
   "device_id": 1,
   "task_type": "image_pose"
 }
@@ -226,8 +348,11 @@ Tạo job xử lý AI.
 ```json
 {
   "success": true,
+  "message": "Job created successfully",
   "data": {
     "job_id": 20,
+    "session_id": 12,
+    "session_key": "session_0012",
     "status": "queued",
     "progress": 0
   }
@@ -236,38 +361,85 @@ Tạo job xử lý AI.
 
 ### `GET /jobs/{job_id}`
 
-Lấy trạng thái job.
+Read job status.
 
 **Response**
 
 ```json
 {
   "success": true,
+  "message": "Job retrieved successfully",
   "data": {
     "job_id": 20,
+    "session_id": 12,
+    "session_key": "session_0012",
+    "media_id": 5,
+    "device_id": 1,
+    "task_type": "image_pose",
     "status": "processing",
-    "progress": 60
+    "progress": 60,
+    "error_message": null,
+    "created_at": "2026-04-20T10:20:00.000000",
+    "started_at": "2026-04-20T10:20:02.000000",
+    "finished_at": null
   }
 }
 ```
 
 ## 8. Result API
 
-### `GET /results/job/{job_id}`
+Results are indexed by `session_key`, not by `job_id`.
 
-Lấy kết quả xử lý.
+### `GET /results/sessions`
+
+List all processed result session ids available under
+`backend/workers/results`.
 
 **Response**
 
 ```json
 {
+  "sessions": [
+    "session_0012",
+    "session_0011"
+  ]
+}
+```
+
+### `GET /results/{session_key}`
+
+List processed frames for one result session.
+
+**Response**
+
+```json
+{
+  "session_id": "session_0012",
+  "frames": [
+    {
+      "frame_id": 1,
+      "pose_image_path": "backend/workers/results/session_0012/frame_1_pose.jpg",
+      "result_json_path": "backend/workers/results/session_0012/frame_1_result.json",
+      "pose_image_url": "/static/results/session_0012/frame_1_pose.jpg"
+    }
+  ]
+}
+```
+
+### `GET /results/{session_key}/{frame_id}`
+
+Read the worker JSON result for one frame.
+
+**Response**
+
+```json
+{
+  "frame_id": 1,
   "success": true,
-  "data": {
-    "result_id": 1,
-    "job_id": 20,
-    "overlay_path": "storage/outputs/result.jpg",
-    "keypoints_json": "{\"nose\": [100, 120]}",
-    "confidence": 0.92
+  "num_detections": 1,
+  "pose_output_path": "backend/workers/results/session_0012/frame_1_pose.jpg",
+  "inference_result": {
+    "error": null
   }
 }
 ```
@@ -276,19 +448,23 @@ Lấy kết quả xử lý.
 
 ### `GET /history`
 
-Lấy danh sách lịch sử.
+List jobs in reverse chronological order.
 
 **Response**
 
 ```json
 {
   "success": true,
+  "message": "History retrieved successfully",
   "data": [
     {
       "job_id": 20,
+      "session_id": 12,
+      "session_key": "session_0012",
       "status": "done",
-      "media_type": "image",
-      "created_at": "2026-04-14T10:00:00"
+      "task_type": "image_pose",
+      "progress": 100,
+      "created_at": "2026-04-20T10:20:00.000000"
     }
   ]
 }
@@ -296,45 +472,72 @@ Lấy danh sách lịch sử.
 
 ### `GET /history/{job_id}`
 
-Lấy chi tiết một job trong lịch sử.
+Read detail for one job plus attached result-session metadata.
 
 **Response**
 
 ```json
 {
   "success": true,
+  "message": "Job detail retrieved successfully",
   "data": {
     "job_id": 20,
+    "session_id": 12,
+    "session_key": "session_0012",
     "status": "done",
+    "task_type": "image_pose",
+    "progress": 100,
+    "error_message": null,
+    "created_at": "2026-04-20T10:20:00.000000",
+    "started_at": "2026-04-20T10:20:02.000000",
+    "finished_at": "2026-04-20T10:20:07.000000",
     "result": {
-      "overlay_path": "storage/outputs/result.jpg",
-      "confidence": 0.92
+      "session_id": "session_0012",
+      "session_exists": true,
+      "result_session_url": "/api/results/session_0012",
+      "frame_count": 16,
+      "pose_ready_count": 16,
+      "result_ready_count": 16,
+      "latest_frame": {
+        "frame_id": 16,
+        "pose_image_path": "backend/workers/results/session_0012/frame_16_pose.jpg",
+        "result_json_path": "backend/workers/results/session_0012/frame_16_result.json",
+        "pose_image_url": "/static/results/session_0012/frame_16_pose.jpg"
+      },
+      "latest_pose_frame": {
+        "frame_id": 16,
+        "pose_image_path": "backend/workers/results/session_0012/frame_16_pose.jpg",
+        "result_json_path": "backend/workers/results/session_0012/frame_16_result.json",
+        "pose_image_url": "/static/results/session_0012/frame_16_pose.jpg"
+      },
+      "latest_result_frame": {
+        "frame_id": 16,
+        "pose_image_path": "backend/workers/results/session_0012/frame_16_pose.jpg",
+        "result_json_path": "backend/workers/results/session_0012/frame_16_result.json",
+        "pose_image_url": "/static/results/session_0012/frame_16_pose.jpg"
+      }
     }
   }
 }
 ```
 
-## 10. Flow hoàn chỉnh
+## 10. Important Notes
 
-### Flow ảnh từ App
+- The current MVP app should use `session + command + results` as the primary
+  orchestration path.
+- `/jobs` and `/history` are still useful for tracking records, but `/jobs`
+  processing is currently stubbed.
+- Result files are served from:
 
-1. `POST /session/create`
-2. `POST /media/upload`
-3. `POST /jobs`
-4. `GET /jobs/{id}` để polling trạng thái
-5. `GET /results/job/{id}`
+```text
+/static/results/<session_key>/<frame>_pose.jpg
+```
 
-### Flow từ Raspberry Pi
+- Result JSON files are read from:
 
-1. `POST /devices/register`
-2. `POST /devices/{id}/heartbeat`
-3. `GET /devices/{id}/commands/pending`
-4. `POST /media/upload`
-5. `POST /jobs`
+```text
+backend/workers/results/<session_key>/frame_<id>_result.json
+```
 
-## 11. Ghi chú quan trọng
-
-- App và Pi đều dùng polling, chưa dùng WebSocket ở giai đoạn MVP.
-- Job luôn xử lý bất đồng bộ.
-- Media và result lưu file trong `storage/`.
-- Backend là trung tâm điều phối, không xử lý trực tiếp UI.
+- Polling is used throughout the MVP. No WebSocket flow is required for the
+  current app path.
