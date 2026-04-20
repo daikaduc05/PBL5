@@ -9,10 +9,11 @@ import '../components/pose_track_screen_frame.dart';
 import '../components/screen_container.dart';
 import '../components/screen_header_bar.dart';
 import '../components/status_badge.dart';
+import '../models/result_models.dart';
 import '../navigation/app_routes.dart';
 import '../services/api_service.dart';
-import '../services/backend_results_service.dart';
 import '../services/mock_pose_tracking_service.dart';
+import '../services/result_api.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_typography.dart';
 import '../utils/app_formatters.dart';
@@ -30,6 +31,7 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
     with SingleTickerProviderStateMixin {
   final ApiService _api = ApiService();
   final MockPoseTrackingService _poseService = MockPoseTrackingService();
+  final ResultApi _resultApi = ResultApi();
 
   late final AnimationController _pulseController;
   late final List<ProcessingStage> _stages;
@@ -40,7 +42,7 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
   bool _isPolling = false;
   PoseAnalysisResult? _legacyResult;
   DeviceCommandInfo? _command;
-  ResultSessionInfo? _resultSession;
+  ResultSessionDetail? _resultSession;
   String? _errorMessage;
 
   @override
@@ -217,12 +219,15 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
         commandId: commandId,
       );
 
-      ResultSessionInfo? resultSession = _resultSession;
+      ResultSessionDetail? resultSession = _resultSession;
       String? resultLookupError;
       try {
-        resultSession = await _api.getResultSession(widget.draft.sessionId);
-      } on ApiException catch (error) {
-        if (error.statusCode == 404) {
+        resultSession = await _resultApi.getResultSessionDetail(
+          widget.draft.sessionId,
+        );
+      } on ResultApiException catch (error) {
+        if (error.message.contains('not found') ||
+            error.message.contains('HTTP 404')) {
           resultSession = null;
         } else {
           resultLookupError = error.message;
@@ -265,7 +270,7 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
 
   double _progressForBackend({
     required DeviceCommandInfo command,
-    required ResultSessionInfo? resultSession,
+    required ResultSessionDetail? resultSession,
   }) {
     if (command.status == 'failed') {
       return 0.78;

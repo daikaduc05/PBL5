@@ -7,9 +7,10 @@ import '../components/pose_visualization_card.dart';
 import '../components/screen_container.dart';
 import '../components/screen_header_bar.dart';
 import '../components/status_badge.dart';
+import '../models/result_models.dart';
 import '../navigation/app_routes.dart';
-import '../services/backend_results_service.dart';
 import '../services/mock_pose_tracking_service.dart';
+import '../services/result_api.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_typography.dart';
 import '../utils/app_formatters.dart';
@@ -29,11 +30,11 @@ class ResultScreen extends StatefulWidget {
 }
 
 class _ResultScreenState extends State<ResultScreen> {
-  final BackendResultsService _resultsService = BackendResultsService();
+  final ResultApi _resultApi = ResultApi();
 
   PoseAnalysisResult? _legacyResult;
-  ResultSessionSummary? _session;
-  ResultFrameSummary? _selectedFrame;
+  ResultSessionDetail? _session;
+  ResultFrameItem? _selectedFrame;
   FrameResultDetail? _frameDetail;
 
   bool _isLoading = true;
@@ -69,7 +70,7 @@ class _ResultScreenState extends State<ResultScreen> {
 
     try {
       final session = widget.sessionArgs != null
-          ? await _resultsService.fetchSession(widget.sessionArgs!.sessionId)
+          ? await _resultApi.getResultSessionDetail(widget.sessionArgs!.sessionId)
           : await _loadLatestSession();
 
       final selectedFrame = _pickInitialFrame(session);
@@ -94,23 +95,23 @@ class _ResultScreenState extends State<ResultScreen> {
         _session = null;
         _selectedFrame = null;
         _frameDetail = null;
-        _errorMessage = extractBackendMessage(error);
+        _errorMessage = extractResultApiMessage(error);
         _isLoading = false;
       });
     }
   }
 
-  Future<ResultSessionSummary> _loadLatestSession() async {
-    final sessions = await _resultsService.fetchSessions();
+  Future<ResultSessionDetail> _loadLatestSession() async {
+    final sessions = await _resultApi.getResultSessions();
     if (sessions.isEmpty) {
-      throw const BackendResultsException(
+      throw const ResultApiException(
         'No processed sessions are available on the backend yet.',
       );
     }
-    return sessions.first;
+    return _resultApi.getResultSessionDetail(sessions.first.sessionId);
   }
 
-  ResultFrameSummary? _pickInitialFrame(ResultSessionSummary session) {
+  ResultFrameItem? _pickInitialFrame(ResultSessionDetail session) {
     if (session.frames.isEmpty) {
       return null;
     }
@@ -133,7 +134,7 @@ class _ResultScreenState extends State<ResultScreen> {
     return session.frames.first;
   }
 
-  Future<void> _selectFrame(ResultFrameSummary frame) async {
+  Future<void> _selectFrame(ResultFrameItem frame) async {
     setState(() {
       _selectedFrame = frame;
       _frameDetail = null;
@@ -166,7 +167,7 @@ class _ResultScreenState extends State<ResultScreen> {
     });
 
     try {
-      final detail = await _resultsService.fetchFrameResult(
+      final detail = await _resultApi.getFrameResult(
         session.sessionId,
         frame.frameId,
       );
@@ -186,7 +187,7 @@ class _ResultScreenState extends State<ResultScreen> {
 
       setState(() {
         _frameDetail = null;
-        _frameDetailMessage = extractBackendMessage(error);
+        _frameDetailMessage = extractResultApiMessage(error);
         _isLoadingFrameDetail = false;
       });
     }
@@ -438,8 +439,8 @@ class _LegacyResultView extends StatelessWidget {
 }
 
 class _BackendResultHero extends StatelessWidget {
-  final ResultSessionSummary session;
-  final ResultFrameSummary selectedFrame;
+  final ResultSessionDetail session;
+  final ResultFrameItem selectedFrame;
 
   const _BackendResultHero({
     required this.session,
@@ -500,7 +501,7 @@ class _BackendResultHero extends StatelessWidget {
 }
 
 class _PoseImagePanel extends StatelessWidget {
-  final ResultFrameSummary frame;
+  final ResultFrameItem frame;
 
   const _PoseImagePanel({required this.frame});
 
@@ -580,9 +581,9 @@ class _PoseImagePanel extends StatelessWidget {
 }
 
 class _FrameChooserPanel extends StatelessWidget {
-  final ResultSessionSummary session;
-  final ResultFrameSummary selectedFrame;
-  final ValueChanged<ResultFrameSummary> onSelectFrame;
+  final ResultSessionDetail session;
+  final ResultFrameItem selectedFrame;
+  final ValueChanged<ResultFrameItem> onSelectFrame;
 
   const _FrameChooserPanel({
     required this.session,

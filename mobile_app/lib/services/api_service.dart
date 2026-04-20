@@ -93,75 +93,10 @@ class DeviceCommandInfo {
       );
 }
 
-class ResultFrameInfo {
-  final int frameId;
-  final String? poseImageUrl;
-  final String? poseImagePath;
-  final String? resultJsonPath;
-
-  const ResultFrameInfo({
-    required this.frameId,
-    required this.poseImageUrl,
-    required this.poseImagePath,
-    required this.resultJsonPath,
-  });
-
-  bool get hasPoseImage => poseImageUrl != null && poseImageUrl!.isNotEmpty;
-
-  bool get hasResultJson => resultJsonPath != null && resultJsonPath!.isNotEmpty;
-
-  factory ResultFrameInfo.fromJson(Map<String, dynamic> json) => ResultFrameInfo(
-    frameId: json['frame_id'] as int? ?? 0,
-    poseImageUrl: json['pose_image_url'] as String?,
-    poseImagePath: json['pose_image_path'] as String?,
-    resultJsonPath: json['result_json_path'] as String?,
-  );
-}
-
-class ResultSessionInfo {
-  final String sessionId;
-  final List<ResultFrameInfo> frames;
-
-  const ResultSessionInfo({
-    required this.sessionId,
-    required this.frames,
-  });
-
-  int get frameCount => frames.length;
-
-  int get poseReadyCount => frames.where((frame) => frame.hasPoseImage).length;
-
-  int get resultReadyCount =>
-      frames.where((frame) => frame.hasResultJson).length;
-
-  int? get latestFrameId => frames.isEmpty ? null : frames.last.frameId;
-
-  int? get latestResultFrameId {
-    for (final frame in frames.reversed) {
-      if (frame.hasResultJson) {
-        return frame.frameId;
-      }
-    }
-    return latestFrameId;
-  }
-
-  factory ResultSessionInfo.fromJson(Map<String, dynamic> json) {
-    final rawFrames = json['frames'] as List<dynamic>? ?? const [];
-    final frames = rawFrames
-        .whereType<Map>()
-        .map((frame) => ResultFrameInfo.fromJson(Map<String, dynamic>.from(frame)))
-        .toList(growable: false)
-      ..sort((left, right) => left.frameId.compareTo(right.frameId));
-
-    return ResultSessionInfo(
-      sessionId: json['session_id'] as String? ?? 'unknown_session',
-      frames: frames,
-    );
-  }
-}
-
 class HistoryItem {
   final int jobId;
+  final int sessionId;
+  final String sessionKey;
   final String status;
   final String taskType;
   final int progress;
@@ -169,6 +104,8 @@ class HistoryItem {
 
   const HistoryItem({
     required this.jobId,
+    required this.sessionId,
+    required this.sessionKey,
     required this.status,
     required this.taskType,
     required this.progress,
@@ -177,6 +114,8 @@ class HistoryItem {
 
   factory HistoryItem.fromJson(Map<String, dynamic> json) => HistoryItem(
     jobId: json['job_id'] as int,
+    sessionId: json['session_id'] as int,
+    sessionKey: json['session_key'] as String,
     status: json['status'] as String,
     taskType: json['task_type'] as String,
     progress: json['progress'] as int? ?? 0,
@@ -187,6 +126,8 @@ class HistoryItem {
 
 class HistoryDetail {
   final int jobId;
+  final int sessionId;
+  final String sessionKey;
   final String status;
   final String taskType;
   final int progress;
@@ -197,6 +138,8 @@ class HistoryDetail {
 
   const HistoryDetail({
     required this.jobId,
+    required this.sessionId,
+    required this.sessionKey,
     required this.status,
     required this.taskType,
     required this.progress,
@@ -208,6 +151,8 @@ class HistoryDetail {
 
   factory HistoryDetail.fromJson(Map<String, dynamic> json) => HistoryDetail(
     jobId: json['job_id'] as int,
+    sessionId: json['session_id'] as int,
+    sessionKey: json['session_key'] as String,
     status: json['status'] as String,
     taskType: json['task_type'] as String,
     progress: json['progress'] as int? ?? 0,
@@ -294,11 +239,6 @@ class ApiService {
       throw const ApiException('Command status data is missing.');
     }
     return DeviceCommandInfo.fromJson(data);
-  }
-
-  Future<ResultSessionInfo> getResultSession(String sessionId) async {
-    final body = await _getJson('/api/results/$sessionId');
-    return ResultSessionInfo.fromJson(body);
   }
 
   /// Send heartbeat for a device.

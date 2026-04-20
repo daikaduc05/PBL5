@@ -36,6 +36,15 @@ class ResultSessionDetail {
 
   int? get latestFrameId => frames.isEmpty ? null : frames.last.frameId;
 
+  int? get latestResultFrameId {
+    for (final frame in frames.reversed) {
+      if (frame.hasResultJson) {
+        return frame.frameId;
+      }
+    }
+    return latestFrameId;
+  }
+
   ResultFrameItem? findFrame(int frameId) {
     for (final frame in frames) {
       if (frame.frameId == frameId) {
@@ -161,6 +170,16 @@ class ResultFrameDetailArgs {
     required this.sessionId,
     required this.frameId,
     this.poseImageUrl,
+  });
+}
+
+class ResultScreenArgs {
+  final String sessionId;
+  final int? initialFrameId;
+
+  const ResultScreenArgs({
+    required this.sessionId,
+    this.initialFrameId,
   });
 }
 

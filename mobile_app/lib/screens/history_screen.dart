@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../components/screen_container.dart';
+import '../models/result_models.dart';
 import '../navigation/app_routes.dart';
 import '../services/api_service.dart';
 import '../theme/app_colors.dart';
@@ -109,8 +110,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   void _openDetail(HistoryItem item) {
-    // Navigate to result sessions for now (backend result file system)
-    Navigator.of(context).pushNamed(AppRoutes.resultSessions);
+    Navigator.of(context).pushNamed(
+      AppRoutes.captureResult,
+      arguments: ResultScreenArgs(sessionId: item.sessionKey),
+    );
   }
 }
 
@@ -285,6 +288,15 @@ class _HistoryCard extends StatelessWidget {
                           style: AppTypography.h3.copyWith(fontSize: 16),
                         ),
                         const SizedBox(height: 3),
+                        Text(
+                          item.sessionKey,
+                          style: AppTypography.bodyMedium.copyWith(
+                            color: AppColors.primary,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
                         Text(
                           item.taskType
                               .replaceAll('_', ' ')
