@@ -45,3 +45,12 @@ def get_oldest_pending_command(db: Session, device_id: int) -> DeviceCommandMode
         .order_by(DeviceCommandModel.created_at.asc(), DeviceCommandModel.id.asc())
         .first()
     )
+
+
+def update_command_status(db: Session, command_id: int, status: str) -> DeviceCommandModel | None:
+    command = db.query(DeviceCommandModel).filter(DeviceCommandModel.id == command_id).first()
+    if command:
+        command.status = status
+        db.commit()
+        db.refresh(command)
+    return command

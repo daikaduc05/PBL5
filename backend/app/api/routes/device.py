@@ -4,6 +4,9 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.schemas.command import (
+    CommandStatusUpdateApiResponse,
+    CommandStatusUpdateRequest,
+    CommandStatusUpdateResponse,
     DeviceCommandCreateApiResponse,
     DeviceCommandCreateRequest,
     DeviceCommandCreateResponse,
@@ -20,7 +23,11 @@ from app.schemas.device import (
     DeviceRegisterResponse,
     DeviceSummaryResponse,
 )
-from app.services.command_service import create_device_command, get_oldest_pending_command
+from app.services.command_service import (
+    create_device_command,
+    get_oldest_pending_command,
+    update_command_status,
+)
 from app.services.device_service import (
     get_device_by_id,
     list_devices,
@@ -168,5 +175,33 @@ def get_pending_command_route(
             command_payload=pending_command.command_payload,
             status=pending_command.status,
             created_at=pending_command.created_at,
+        ),
+    )
+
+
+@router.patch("/devices/{device_id}/commands/{command_id}/status", response_model=CommandStatusUpdateApiResponse)
+def update_command_status_route(
+    device_id: int,
+    command_id: int,
+    payload: CommandStatusUpdateRequest,
+    db: Session = Depends(get_db),
+) -> CommandStatusUpdateApiResponse | JSONResponse:
+    device = get_device_by_id(db, device_id)
+    if device is None:
+        return _error_response(status_code=404, message="Device not found")
+
+    updated_command = update_command_status(db=db, command_id=command_id, status=payload.status)
+    if updated_command is None:
+        return _error_response(status_code=404, message="Command not found")
+
+    if updated_command.device_id != device.id:
+        return _error_response(status_code=400, message="Command does not belong to this device")
+
+    return CommandStatusUpdateApiResponse(
+        success=True,
+        message="Command status updated successfully",
+        data=CommandStatusUpdateResponse(
+            command_id=updated_command.id,
+            status=updated_command.status,
         ),
     )

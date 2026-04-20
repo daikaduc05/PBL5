@@ -35,3 +35,16 @@ class PendingCommandResponse(BaseModel):
 
 class PendingCommandApiResponse(ApiResponse):
     data: PendingCommandResponse | None = None
+
+
+class CommandStatusUpdateRequest(BaseModel):
+    status: CommandStatus
+
+
+class CommandStatusUpdateResponse(BaseModel):
+    command_id: int
+    status: CommandStatus
+
+
+class CommandStatusUpdateApiResponse(ApiResponse):
+    data: CommandStatusUpdateResponse | None = None
