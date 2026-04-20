@@ -52,6 +52,9 @@ class PoseTrackSettings {
 
 class CaptureSessionDraft {
   final String sessionId;
+  final int? backendSessionId;
+  final int? deviceId;
+  final int? commandId;
   final CaptureMode mode;
   final int targetDurationSeconds;
   final int actualDurationSeconds;
@@ -62,6 +65,9 @@ class CaptureSessionDraft {
 
   const CaptureSessionDraft({
     required this.sessionId,
+    this.backendSessionId,
+    this.deviceId,
+    this.commandId,
     required this.mode,
     required this.targetDurationSeconds,
     required this.actualDurationSeconds,
@@ -248,6 +254,9 @@ class MockPoseTrackingService {
 
     return CaptureSessionDraft(
       sessionId: buildSessionId(capturedAt),
+      backendSessionId: null,
+      deviceId: null,
+      commandId: null,
       mode: mode,
       targetDurationSeconds: targetDurationSeconds,
       actualDurationSeconds: actualDurationSeconds,

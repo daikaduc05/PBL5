@@ -1,3 +1,7 @@
+import '../config/backend_config.dart';
+import 'api_service.dart';
+import 'mock_pose_tracking_service.dart';
+
 enum DeviceEndpoint { raspberryPi, processingServer }
 
 extension DeviceEndpointX on DeviceEndpoint {
@@ -60,154 +64,215 @@ class DeviceConnectionNode {
   }
 }
 
-class MockDeviceConnectionService {
-  MockDeviceConnectionService._();
+class DeviceConnectionService {
+  DeviceConnectionService({
+    MockPoseTrackingService? settingsService,
+    ApiService? api,
+  }) : _settingsService = settingsService ?? MockPoseTrackingService(),
+       _api = api ?? ApiService(settingsService: settingsService);
 
-  static final MockDeviceConnectionService _instance =
-      MockDeviceConnectionService._();
+  final MockPoseTrackingService _settingsService;
+  final ApiService _api;
 
-  factory MockDeviceConnectionService() => _instance;
-
-  List<DeviceConnectionNode> _devices = const [
-    DeviceConnectionNode(
-      endpoint: DeviceEndpoint.raspberryPi,
-      name: 'Raspberry Pi 4B',
-      role: 'Edge Capture Node',
-      ipAddress: '192.168.1.24',
-      status: DeviceLinkStatus.disconnected,
-      transport: 'Wi-Fi 6 / Camera CSI',
-      metricLabel: 'Lens Sync',
-      metricValue: 'Awaiting link',
-      lastSeen: 'Last seen 3m ago',
-      statusDetail:
-          'Device discovered on the local network. Start a secure link before the next capture.',
-    ),
-    DeviceConnectionNode(
-      endpoint: DeviceEndpoint.processingServer,
-      name: 'Inference Server',
-      role: 'Pose Processing Backend',
-      ipAddress: '192.168.1.10',
-      status: DeviceLinkStatus.connected,
-      transport: 'Ethernet / REST API',
-      metricLabel: 'Inference Queue',
-      metricValue: '0 jobs',
-      lastSeen: 'Heartbeat 6s ago',
-      statusDetail:
-          'PoseTrack API is online and ready to receive uploads from the mobile workflow.',
-    ),
-  ];
-
-  Future<List<DeviceConnectionNode>> getDevices() async {
-    await Future.delayed(const Duration(milliseconds: 180));
-    return _cloneDevices();
-  }
+  Future<List<DeviceConnectionNode>> getDevices() => _loadNodes();
 
   Future<bool> allDevicesConnected() async {
-    final devices = await getDevices();
-    return devices.every((device) => device.status == DeviceLinkStatus.connected);
+    final devices = await _loadNodes();
+    return devices.isNotEmpty &&
+        devices.every((device) => device.status == DeviceLinkStatus.connected);
   }
 
-  Future<List<DeviceConnectionNode>> scanDevices() async {
-    await Future.delayed(const Duration(milliseconds: 900));
-
-    _devices = _devices
-        .map(
-          (device) => switch (device.endpoint) {
-            DeviceEndpoint.raspberryPi => device.copyWith(
-              ipAddress: '192.168.1.24',
-              lastSeen: 'Discovered just now',
-              statusDetail: device.status == DeviceLinkStatus.connected
-                  ? 'Raspberry Pi responded to the network sweep and the capture link is still healthy.'
-                  : 'Raspberry Pi found on the subnet. Tap Connect to arm the mobile capture session.',
-            ),
-            DeviceEndpoint.processingServer => device.copyWith(
-              ipAddress: '192.168.1.10',
-              lastSeen: 'Heartbeat 2s ago',
-              statusDetail: device.status == DeviceLinkStatus.connected
-                  ? 'Processing server acknowledged the scan and the inference endpoint is healthy.'
-                  : 'Processing server detected and waiting for a fresh secure session.',
-            ),
-          },
-        )
-        .toList(growable: false);
-
-    return _cloneDevices();
-  }
+  Future<List<DeviceConnectionNode>> scanDevices() => _loadNodes();
 
   Future<DeviceConnectionNode> connectDevice(DeviceEndpoint endpoint) async {
-    await Future.delayed(const Duration(milliseconds: 1100));
-
-    return switch (endpoint) {
-      DeviceEndpoint.raspberryPi => _updateDevice(
-        endpoint,
-        status: DeviceLinkStatus.connected,
-        metricValue: '42 FPS',
-        lastSeen: 'Synced just now',
-        statusDetail:
-            'Capture node linked successfully. Camera stream and telemetry are ready for the next session.',
-      ),
-      DeviceEndpoint.processingServer => _updateDevice(
-        endpoint,
-        status: DeviceLinkStatus.connected,
-        metricValue: 'Queue idle',
-        lastSeen: 'Synced just now',
-        statusDetail:
-            'Processing server linked. Upload endpoint, pose engine, and result queue are ready.',
-      ),
-    };
+    return _refreshEndpoint(endpoint);
   }
 
   Future<DeviceConnectionNode> reconnectDevice(DeviceEndpoint endpoint) async {
-    await Future.delayed(const Duration(milliseconds: 850));
-
-    return switch (endpoint) {
-      DeviceEndpoint.raspberryPi => _updateDevice(
-        endpoint,
-        status: DeviceLinkStatus.connected,
-        metricValue: '41 FPS',
-        lastSeen: 'Heartbeat live',
-        statusDetail:
-            'Raspberry Pi session recovered. Frame sync and Wi-Fi heartbeat are stable again.',
-      ),
-      DeviceEndpoint.processingServer => _updateDevice(
-        endpoint,
-        status: DeviceLinkStatus.connected,
-        metricValue: 'Model hot',
-        lastSeen: 'Heartbeat live',
-        statusDetail:
-            'Server session refreshed. Inference API and background workers responded without delay.',
-      ),
-    };
+    return _refreshEndpoint(endpoint);
   }
 
-  DeviceConnectionNode _updateDevice(
-    DeviceEndpoint endpoint, {
-    required DeviceLinkStatus status,
-    required String metricValue,
-    required String lastSeen,
-    required String statusDetail,
-  }) {
-    final index = _devices.indexWhere((device) => device.endpoint == endpoint);
+  Future<DeviceConnectionNode> _refreshEndpoint(DeviceEndpoint endpoint) async {
+    final nodes = await _loadNodes();
+    final node = nodes.firstWhere((item) => item.endpoint == endpoint);
+    if (node.status != DeviceLinkStatus.connected) {
+      throw StateError(node.statusDetail);
+    }
+    return node;
+  }
 
-    if (index == -1) {
-      throw StateError('Unknown endpoint: $endpoint');
+  Future<List<DeviceConnectionNode>> _loadNodes() async {
+    final settings = await _settingsService.getSettings();
+    final backendHealthy = await _api.checkHealth();
+
+    List<DeviceInfo> devices = const [];
+    String? deviceErrorMessage;
+    if (backendHealthy) {
+      try {
+        devices = await _api.getDevices();
+      } catch (error) {
+        deviceErrorMessage = extractApiError(error);
+      }
     }
 
-    final updated = _devices[index].copyWith(
-      status: status,
-      metricValue: metricValue,
-      lastSeen: lastSeen,
-      statusDetail: statusDetail,
+    final serverNode = _buildServerNode(
+      serverAddress: settings.serverAddress,
+      backendHealthy: backendHealthy,
+      errorMessage: deviceErrorMessage,
+    );
+    final piNode = _buildPiNode(
+      raspberryPiIp: settings.raspberryPiIp,
+      devices: devices,
+      backendHealthy: backendHealthy,
+      errorMessage: deviceErrorMessage,
     );
 
-    final next = List<DeviceConnectionNode>.from(_devices);
-    next[index] = updated;
-    _devices = List.unmodifiable(next);
-
-    return updated.copyWith();
+    return [piNode, serverNode];
   }
 
-  List<DeviceConnectionNode> _cloneDevices() {
-    return _devices.map((device) => device.copyWith()).toList(growable: false);
+  DeviceConnectionNode _buildServerNode({
+    required String serverAddress,
+    required bool backendHealthy,
+    required String? errorMessage,
+  }) {
+    final endpoint = _normalizeBaseUrl(serverAddress);
+    final serverUri = Uri.parse(endpoint);
+    final ipAddress = serverUri.hasPort
+        ? '${serverUri.host}:${serverUri.port}'
+        : serverUri.host;
+
+    return DeviceConnectionNode(
+      endpoint: DeviceEndpoint.processingServer,
+      name: 'Inference Server',
+      role: 'Pose Processing Backend',
+      ipAddress: ipAddress,
+      status: backendHealthy
+          ? DeviceLinkStatus.connected
+          : DeviceLinkStatus.disconnected,
+      transport: 'HTTP / FastAPI REST',
+      metricLabel: 'Health',
+      metricValue: backendHealthy ? 'Healthy' : 'Offline',
+      lastSeen: backendHealthy ? 'Reachable just now' : 'No response yet',
+      statusDetail: backendHealthy
+          ? 'FastAPI backend is reachable and ready to accept mobile requests.'
+          : (errorMessage ??
+                'Cannot reach the FastAPI backend. Check the server IP, port, and Wi-Fi network.'),
+    );
+  }
+
+  DeviceConnectionNode _buildPiNode({
+    required String raspberryPiIp,
+    required List<DeviceInfo> devices,
+    required bool backendHealthy,
+    required String? errorMessage,
+  }) {
+    if (!backendHealthy) {
+      return DeviceConnectionNode(
+        endpoint: DeviceEndpoint.raspberryPi,
+        name: 'Raspberry Pi',
+        role: 'Edge Capture Node',
+        ipAddress: raspberryPiIp,
+        status: DeviceLinkStatus.disconnected,
+        transport: 'Wi-Fi / ZeroMQ',
+        metricLabel: 'Device Code',
+        metricValue: BackendConfig.defaultPiDeviceCode,
+        lastSeen: 'Backend unavailable',
+        statusDetail:
+            'The backend is offline, so the app cannot confirm Raspberry Pi heartbeat yet.',
+      );
+    }
+
+    final preferredDevice = _pickPreferredDevice(devices);
+    if (preferredDevice == null) {
+      return DeviceConnectionNode(
+        endpoint: DeviceEndpoint.raspberryPi,
+        name: 'Raspberry Pi',
+        role: 'Edge Capture Node',
+        ipAddress: raspberryPiIp,
+        status: DeviceLinkStatus.disconnected,
+        transport: 'Wi-Fi / ZeroMQ',
+        metricLabel: 'Device Code',
+        metricValue: BackendConfig.defaultPiDeviceCode,
+        lastSeen: 'Waiting for registration',
+        statusDetail:
+            errorMessage ??
+            'No Raspberry Pi device is registered on the backend yet. Start the Pi agent and wait for heartbeat.',
+      );
+    }
+
+    final backendStatus = preferredDevice.status.toLowerCase();
+    final isConnected =
+        backendStatus != 'offline' && backendStatus != 'error';
+
+    return DeviceConnectionNode(
+      endpoint: DeviceEndpoint.raspberryPi,
+      name: preferredDevice.deviceName,
+      role: 'Edge Capture Node',
+      ipAddress: raspberryPiIp,
+      status: isConnected
+          ? DeviceLinkStatus.connected
+          : DeviceLinkStatus.disconnected,
+      transport: 'Wi-Fi / ZeroMQ',
+      metricLabel: 'Backend State',
+      metricValue: backendStatus.toUpperCase(),
+      lastSeen: _formatLastSeen(preferredDevice.lastSeen),
+      statusDetail: isConnected
+          ? 'Pi agent is registered with the backend and ready for the next capture command.'
+          : 'The Raspberry Pi is registered but currently offline. Check the Pi agent process and heartbeat.',
+    );
+  }
+
+  DeviceInfo? _pickPreferredDevice(List<DeviceInfo> devices) {
+    if (devices.isEmpty) {
+      return null;
+    }
+
+    for (final device in devices) {
+      if (device.deviceCode == BackendConfig.defaultPiDeviceCode) {
+        return device;
+      }
+    }
+
+    return devices.first;
+  }
+
+  String _normalizeBaseUrl(String rawAddress) {
+    var value = rawAddress.trim();
+    if (value.isEmpty) {
+      value = BackendConfig.defaultServerAddress;
+    }
+    if (!value.contains('://')) {
+      value = 'http://$value';
+    }
+    value = value.replaceFirst(RegExp(r'/$'), '');
+    if (value.endsWith('/api')) {
+      value = value.substring(0, value.length - 4);
+    }
+    return value;
+  }
+
+  String _formatLastSeen(DateTime? value) {
+    if (value == null) {
+      return 'No heartbeat timestamp';
+    }
+
+    final difference = DateTime.now().difference(value.toLocal());
+    if (difference.inSeconds < 10) {
+      return 'Heartbeat just now';
+    }
+    if (difference.inMinutes < 1) {
+      return 'Heartbeat ${difference.inSeconds}s ago';
+    }
+    if (difference.inHours < 1) {
+      return 'Heartbeat ${difference.inMinutes}m ago';
+    }
+    if (difference.inDays < 1) {
+      return 'Heartbeat ${difference.inHours}h ago';
+    }
+
+    final year = value.toLocal().year.toString().padLeft(4, '0');
+    final month = value.toLocal().month.toString().padLeft(2, '0');
+    final day = value.toLocal().day.toString().padLeft(2, '0');
+    return 'Heartbeat $year/$month/$day';
   }
 }

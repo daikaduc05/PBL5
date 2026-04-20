@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../config/backend_config.dart';
 import 'mock_pose_tracking_service.dart';
 
 /// Exception thrown by [ApiService] on HTTP or network errors.
@@ -21,12 +22,16 @@ class DeviceInfo {
   final String deviceName;
   final String deviceCode;
   final String status;
+  final DateTime? lastSeen;
+  final DateTime? createdAt;
 
   const DeviceInfo({
     required this.id,
     required this.deviceName,
     required this.deviceCode,
     required this.status,
+    required this.lastSeen,
+    required this.createdAt,
   });
 
   factory DeviceInfo.fromJson(Map<String, dynamic> json) => DeviceInfo(
@@ -34,7 +39,125 @@ class DeviceInfo {
     deviceName: json['device_name'] as String,
     deviceCode: json['device_code'] as String,
     status: json['status'] as String? ?? 'unknown',
+    lastSeen: _parseDateTime(json['last_seen']),
+    createdAt: _parseDateTime(json['created_at']),
   );
+}
+
+class SessionInfo {
+  final int sessionId;
+  final String sessionKey;
+  final String token;
+  final String status;
+  final DateTime? createdAt;
+
+  const SessionInfo({
+    required this.sessionId,
+    required this.sessionKey,
+    required this.token,
+    required this.status,
+    required this.createdAt,
+  });
+
+  factory SessionInfo.fromJson(Map<String, dynamic> json) => SessionInfo(
+    sessionId: json['session_id'] as int,
+    sessionKey: json['session_key'] as String,
+    token: json['token'] as String,
+    status: json['status'] as String? ?? 'active',
+    createdAt: _parseDateTime(json['created_at']),
+  );
+}
+
+class DeviceCommandInfo {
+  final int commandId;
+  final int sessionId;
+  final String sessionKey;
+  final String status;
+  final DateTime? executedAt;
+
+  const DeviceCommandInfo({
+    required this.commandId,
+    required this.sessionId,
+    required this.sessionKey,
+    required this.status,
+    required this.executedAt,
+  });
+
+  factory DeviceCommandInfo.fromJson(Map<String, dynamic> json) =>
+      DeviceCommandInfo(
+        commandId: json['command_id'] as int,
+        sessionId: json['session_id'] as int,
+        sessionKey: json['session_key'] as String,
+        status: json['status'] as String? ?? 'pending',
+        executedAt: _parseDateTime(json['executed_at']),
+      );
+}
+
+class ResultFrameInfo {
+  final int frameId;
+  final String? poseImageUrl;
+  final String? poseImagePath;
+  final String? resultJsonPath;
+
+  const ResultFrameInfo({
+    required this.frameId,
+    required this.poseImageUrl,
+    required this.poseImagePath,
+    required this.resultJsonPath,
+  });
+
+  bool get hasPoseImage => poseImageUrl != null && poseImageUrl!.isNotEmpty;
+
+  bool get hasResultJson => resultJsonPath != null && resultJsonPath!.isNotEmpty;
+
+  factory ResultFrameInfo.fromJson(Map<String, dynamic> json) => ResultFrameInfo(
+    frameId: json['frame_id'] as int? ?? 0,
+    poseImageUrl: json['pose_image_url'] as String?,
+    poseImagePath: json['pose_image_path'] as String?,
+    resultJsonPath: json['result_json_path'] as String?,
+  );
+}
+
+class ResultSessionInfo {
+  final String sessionId;
+  final List<ResultFrameInfo> frames;
+
+  const ResultSessionInfo({
+    required this.sessionId,
+    required this.frames,
+  });
+
+  int get frameCount => frames.length;
+
+  int get poseReadyCount => frames.where((frame) => frame.hasPoseImage).length;
+
+  int get resultReadyCount =>
+      frames.where((frame) => frame.hasResultJson).length;
+
+  int? get latestFrameId => frames.isEmpty ? null : frames.last.frameId;
+
+  int? get latestResultFrameId {
+    for (final frame in frames.reversed) {
+      if (frame.hasResultJson) {
+        return frame.frameId;
+      }
+    }
+    return latestFrameId;
+  }
+
+  factory ResultSessionInfo.fromJson(Map<String, dynamic> json) {
+    final rawFrames = json['frames'] as List<dynamic>? ?? const [];
+    final frames = rawFrames
+        .whereType<Map>()
+        .map((frame) => ResultFrameInfo.fromJson(Map<String, dynamic>.from(frame)))
+        .toList(growable: false)
+      ..sort((left, right) => left.frameId.compareTo(right.frameId));
+
+    return ResultSessionInfo(
+      sessionId: json['session_id'] as String? ?? 'unknown_session',
+      frames: frames,
+    );
+  }
 }
 
 class HistoryItem {
@@ -132,6 +255,50 @@ class ApiService {
         .whereType<Map<String, dynamic>>()
         .map(DeviceInfo.fromJson)
         .toList(growable: false);
+  }
+
+  Future<SessionInfo> createSession() async {
+    final body = await _postJson('/api/session/create', const {});
+    final data = body['data'] as Map<String, dynamic>?;
+    if (data == null) {
+      throw const ApiException('Session creation data is missing.');
+    }
+    return SessionInfo.fromJson(data);
+  }
+
+  Future<DeviceCommandInfo> createDeviceCommand({
+    required int deviceId,
+    required int sessionId,
+    required String commandType,
+    Map<String, dynamic>? commandPayload,
+  }) async {
+    final body = await _postJson('/api/devices/$deviceId/commands', {
+      'session_id': sessionId,
+      'command_type': commandType,
+      'command_payload': commandPayload,
+    });
+    final data = body['data'] as Map<String, dynamic>?;
+    if (data == null) {
+      throw const ApiException('Command creation data is missing.');
+    }
+    return DeviceCommandInfo.fromJson(data);
+  }
+
+  Future<DeviceCommandInfo> getDeviceCommandStatus({
+    required int deviceId,
+    required int commandId,
+  }) async {
+    final body = await _getJson('/api/devices/$deviceId/commands/$commandId');
+    final data = body['data'] as Map<String, dynamic>?;
+    if (data == null) {
+      throw const ApiException('Command status data is missing.');
+    }
+    return DeviceCommandInfo.fromJson(data);
+  }
+
+  Future<ResultSessionInfo> getResultSession(String sessionId) async {
+    final body = await _getJson('/api/results/$sessionId');
+    return ResultSessionInfo.fromJson(body);
   }
 
   /// Send heartbeat for a device.
@@ -248,7 +415,7 @@ class ApiService {
   Future<Uri> _buildUri(String path) async {
     final settings = await _settingsService.getSettings();
     var base = settings.serverAddress.trim();
-    if (base.isEmpty) base = '127.0.0.1:8002';
+    if (base.isEmpty) base = BackendConfig.defaultServerAddress;
     if (!base.contains('://')) base = 'http://$base';
     base = base.replaceFirst(RegExp(r'/$'), '');
     if (base.endsWith('/api')) base = base.substring(0, base.length - 4);
@@ -259,4 +426,11 @@ class ApiService {
 String extractApiError(Object error) {
   if (error is ApiException) return error.message;
   return error.toString();
+}
+
+DateTime? _parseDateTime(Object? value) {
+  if (value is String && value.isNotEmpty) {
+    return DateTime.tryParse(value);
+  }
+  return null;
 }

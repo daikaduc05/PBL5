@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../config/backend_config.dart';
 import 'mock_pose_tracking_service.dart';
 
 class BackendResultsException implements Exception {
@@ -41,7 +42,9 @@ class ResultFrameSummary {
     return ResultFrameSummary(
       frameId: _parseInt(json['frame_id']) ?? 0,
       poseImageUrl: json['pose_image_url'] as String?,
-      resultJsonUrl: json['result_json_url'] as String?,
+      resultJsonUrl:
+          json['result_json_url'] as String? ??
+          json['result_json_path'] as String?,
     );
   }
 }
@@ -219,7 +222,7 @@ class BackendResultsService {
   String _normalizeBaseUrl(String rawAddress) {
     var value = rawAddress.trim();
     if (value.isEmpty) {
-      value = '127.0.0.1:8002';
+      value = BackendConfig.defaultServerAddress;
     }
 
     if (!value.contains('://')) {

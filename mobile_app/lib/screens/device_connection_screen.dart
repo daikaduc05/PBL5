@@ -17,7 +17,7 @@ class DeviceConnectionScreen extends StatefulWidget {
 }
 
 class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
-  final MockDeviceConnectionService _service = MockDeviceConnectionService();
+  final DeviceConnectionService _service = DeviceConnectionService();
 
   List<DeviceConnectionNode> _devices = const [];
   Set<DeviceEndpoint> _busyEndpoints = <DeviceEndpoint>{};
@@ -211,7 +211,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
 
   String _defaultNetworkMessage(List<DeviceConnectionNode> devices) {
     if (devices.isEmpty) {
-      return 'Loading mock device telemetry...';
+      return 'Loading device telemetry from the backend...';
     }
 
     final connectedCount = devices
@@ -973,7 +973,7 @@ class _LoadingPanel extends StatelessWidget {
           const SizedBox(width: 14),
           Expanded(
             child: Text(
-              'Loading mock device telemetry and connection health...',
+              'Loading device telemetry and connection health...',
               style: AppTypography.bodyMedium.copyWith(
                 color: AppColors.textPrimary.withValues(alpha: 0.86),
                 fontSize: 14,

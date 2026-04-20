@@ -10,8 +10,9 @@ import '../components/pose_visualization_card.dart';
 import '../components/screen_container.dart';
 import '../components/screen_header_bar.dart';
 import '../components/status_badge.dart';
+import '../config/backend_config.dart';
 import '../navigation/app_routes.dart';
-import '../services/mock_device_connection_service.dart';
+import '../services/api_service.dart';
 import '../services/mock_pose_tracking_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_typography.dart';
@@ -25,16 +26,19 @@ class CaptureControlScreen extends StatefulWidget {
 }
 
 class _CaptureControlScreenState extends State<CaptureControlScreen> {
+  final ApiService _api = ApiService();
   final MockPoseTrackingService _poseService = MockPoseTrackingService();
-  final MockDeviceConnectionService _deviceService = MockDeviceConnectionService();
 
   CaptureMode _selectedMode = CaptureMode.video;
   int _selectedDurationSeconds = 10;
   bool _autoUpload = true;
   bool _isLoading = true;
+  bool _isSubmittingCapture = false;
   bool _isRecording = false;
   bool _pipelineReady = false;
   Duration _elapsed = Duration.zero;
+  int? _captureDeviceId;
+  String? _captureDeviceName;
   Timer? _timer;
 
   @override
@@ -51,10 +55,22 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
 
   Future<void> _loadConfiguration() async {
     final settings = await _poseService.getSettings();
-    final devices = await _deviceService.getDevices();
-    final ready = devices.every(
-      (device) => device.status == DeviceLinkStatus.connected,
-    );
+    var ready = false;
+    int? captureDeviceId;
+    String? captureDeviceName;
+
+    try {
+      final backendHealthy = await _api.checkHealth();
+      if (backendHealthy) {
+        final devices = await _api.getDevices();
+        final captureDevice = _pickCaptureDevice(devices);
+        ready = captureDevice != null && _isDeviceReady(captureDevice);
+        captureDeviceId = captureDevice?.id;
+        captureDeviceName = captureDevice?.deviceName;
+      }
+    } catch (_) {
+      ready = false;
+    }
 
     if (!mounted) {
       return;
@@ -65,8 +81,29 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
       _selectedDurationSeconds = settings.defaultDurationSeconds;
       _autoUpload = settings.autoUpload;
       _pipelineReady = ready;
+      _captureDeviceId = captureDeviceId;
+      _captureDeviceName = captureDeviceName;
       _isLoading = false;
     });
+  }
+
+  DeviceInfo? _pickCaptureDevice(List<DeviceInfo> devices) {
+    if (devices.isEmpty) {
+      return null;
+    }
+
+    for (final device in devices) {
+      if (device.deviceCode == BackendConfig.defaultPiDeviceCode) {
+        return device;
+      }
+    }
+
+    return devices.first;
+  }
+
+  bool _isDeviceReady(DeviceInfo device) {
+    final normalizedStatus = device.status.toLowerCase();
+    return normalizedStatus != 'offline' && normalizedStatus != 'error';
   }
 
   void _selectMode(CaptureMode mode) {
@@ -92,15 +129,11 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
     });
   }
 
-  void _showDemoModeMessage() {
-    if (_pipelineReady) {
-      return;
-    }
-
+  void _showPipelineRequiredMessage() {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text(
-          'Mock demo mode is active. Connect both endpoints for the full IoT pipeline.',
+          'Connect the backend and Raspberry Pi first, then start the capture command.',
         ),
       ),
     );
@@ -113,11 +146,14 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
   }
 
   void _startRecording() {
-    if (_isLoading || _isRecording || _selectedMode != CaptureMode.video) {
+    if (_isLoading || _isSubmittingCapture || _isRecording || _selectedMode != CaptureMode.video) {
       return;
     }
 
-    _showDemoModeMessage();
+    if (!_pipelineReady) {
+      _showPipelineRequiredMessage();
+      return;
+    }
 
     setState(() {
       _isRecording = true;
@@ -148,7 +184,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
   }
 
   Future<void> _stopRecording({bool autoTriggered = false}) async {
-    if (!_isRecording) {
+    if (!_isRecording || _isSubmittingCapture) {
       return;
     }
 
@@ -162,53 +198,158 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
       _isRecording = false;
     });
 
-    final draft = await _poseService.createCaptureDraft(
+    await _submitCaptureCommand(
       mode: CaptureMode.video,
       targetDurationSeconds: _selectedDurationSeconds,
       actualDurationSeconds: actualDurationSeconds,
-    );
-
-    if (!mounted) {
-      return;
-    }
-
-    if (!autoTriggered) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Recording saved. Preparing AI processing.')),
-      );
-    }
-
-    Navigator.of(context).pushNamed(
-      AppRoutes.processing,
-      arguments: draft,
+      successMessage: autoTriggered
+          ? null
+          : 'Recording saved. Capture command sent to the Raspberry Pi.',
     );
   }
 
   Future<void> _captureImage() async {
-    if (_isLoading || _isRecording || _selectedMode != CaptureMode.image) {
+    if (_isLoading || _isSubmittingCapture || _isRecording || _selectedMode != CaptureMode.image) {
       return;
     }
 
-    _showDemoModeMessage();
+    if (!_pipelineReady) {
+      _showPipelineRequiredMessage();
+      return;
+    }
 
-    final draft = await _poseService.createCaptureDraft(
+    await _submitCaptureCommand(
       mode: CaptureMode.image,
       targetDurationSeconds: 0,
       actualDurationSeconds: 0,
+      successMessage: 'Image capture command sent to the Raspberry Pi.',
     );
+  }
 
-    if (!mounted) {
-      return;
+  Future<void> _submitCaptureCommand({
+    required CaptureMode mode,
+    required int targetDurationSeconds,
+    required int actualDurationSeconds,
+    String? successMessage,
+  }) async {
+    setState(() {
+      _isSubmittingCapture = true;
+    });
+
+    try {
+      final draft = await _createBackendCaptureDraft(
+        mode: mode,
+        targetDurationSeconds: targetDurationSeconds,
+        actualDurationSeconds: actualDurationSeconds,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      if (successMessage != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(successMessage)),
+        );
+      }
+
+      Navigator.of(context).pushNamed(
+        AppRoutes.processing,
+        arguments: draft,
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(extractApiError(error))),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmittingCapture = false;
+        });
+      }
+    }
+  }
+
+  Future<CaptureSessionDraft> _createBackendCaptureDraft({
+    required CaptureMode mode,
+    required int targetDurationSeconds,
+    required int actualDurationSeconds,
+  }) async {
+    final settings = await _poseService.getSettings();
+    final captureDevice = await _resolveCaptureDevice();
+    if (captureDevice == null || !_isDeviceReady(captureDevice)) {
+      throw const ApiException(
+        'No online Raspberry Pi device is available on the backend yet.',
+      );
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Image captured. Sending frame to the server.')),
+    final session = await _api.createSession();
+    final command = await _api.createDeviceCommand(
+      deviceId: captureDevice.id,
+      sessionId: session.sessionId,
+      commandType: 'start_recording',
+      commandPayload: {
+        'frames_dir': BackendConfig.defaultPiFramesDir,
+        'zmq_host': _resolveZmqHost(settings.serverAddress),
+        'zmq_port': BackendConfig.defaultZmqPort,
+        'capture_mode': mode.name,
+        'target_duration_seconds': targetDurationSeconds,
+        'actual_duration_seconds': actualDurationSeconds,
+        'source': 'mobile_app',
+      },
     );
 
-    Navigator.of(context).pushNamed(
-      AppRoutes.processing,
-      arguments: draft,
+    return CaptureSessionDraft(
+      sessionId: command.sessionKey,
+      backendSessionId: session.sessionId,
+      deviceId: captureDevice.id,
+      commandId: command.commandId,
+      mode: mode,
+      targetDurationSeconds: targetDurationSeconds,
+      actualDurationSeconds: actualDurationSeconds,
+      capturedAt: session.createdAt ?? DateTime.now(),
+      autoUpload: settings.autoUpload,
+      raspberryPiIp: settings.raspberryPiIp,
+      serverAddress: settings.serverAddress,
     );
+  }
+
+  Future<DeviceInfo?> _resolveCaptureDevice() async {
+    if (_captureDeviceId != null) {
+      final devices = await _api.getDevices();
+      for (final device in devices) {
+        if (device.id == _captureDeviceId) {
+          return device;
+        }
+      }
+    }
+
+    final devices = await _api.getDevices();
+    final captureDevice = _pickCaptureDevice(devices);
+    if (mounted) {
+      setState(() {
+        _captureDeviceId = captureDevice?.id;
+        _captureDeviceName = captureDevice?.deviceName;
+        _pipelineReady = captureDevice != null && _isDeviceReady(captureDevice);
+      });
+    }
+    return captureDevice;
+  }
+
+  String _resolveZmqHost(String serverAddress) {
+    var value = serverAddress.trim();
+    if (value.isEmpty) {
+      value = BackendConfig.defaultServerAddress;
+    }
+    if (!value.contains('://')) {
+      value = 'http://$value';
+    }
+    final uri = Uri.parse(value);
+    return uri.host.isEmpty ? 'localhost' : uri.host;
   }
 
   void _goBack() {
@@ -242,7 +383,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
                     'Portrait-first mobile recording controls for the Raspberry Pi and AI pose pipeline.',
                 onBackPressed: _goBack,
                 trailing: StatusBadge(
-                  label: _pipelineReady ? 'Ready' : 'Demo Mode',
+                  label: _pipelineReady ? 'Ready' : 'Check Connect',
                   color: _pipelineReady ? AppColors.success : AppColors.primary,
                 ),
               ),
@@ -322,12 +463,13 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
                         _InfoTag(
                           icon: Icons.memory_rounded,
                           label: 'Edge Node',
-                          value: _pipelineReady ? 'Linked' : 'Preview Ready',
+                          value: _captureDeviceName ??
+                              (_pipelineReady ? 'Linked' : 'Waiting'),
                         ),
                         _InfoTag(
                           icon: Icons.cloud_done_rounded,
                           label: 'Server',
-                          value: _pipelineReady ? 'Online' : 'Mock Queue',
+                          value: _pipelineReady ? 'Command Ready' : 'Check API',
                         ),
                         _InfoTag(
                           icon: Icons.schedule_rounded,
@@ -438,7 +580,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
                       : () => _showModeHint(
                           'Switch to video mode to start a recording session.',
                         ),
-                  isLoading: _isLoading,
+                  isLoading: _isLoading || _isSubmittingCapture,
                 ),
               ),
               const SizedBox(height: 12),

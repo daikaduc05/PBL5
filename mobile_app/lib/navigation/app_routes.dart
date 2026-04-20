@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/result_models.dart';
+import '../services/backend_results_service.dart';
 import '../services/mock_pose_tracking_service.dart';
 import '../screens/capture_control_screen.dart';
 import '../screens/device_connection_screen.dart';
@@ -49,13 +50,18 @@ class AppRoutes {
         }
         return _missingArgumentRoute('Capture session draft');
       case captureResult:
-        final result = routeSettings.arguments;
-        if (result is! PoseAnalysisResult) {
-          return _missingArgumentRoute('Pose analysis result');
+        final args = routeSettings.arguments;
+        if (args is PoseAnalysisResult) {
+          return MaterialPageRoute(
+            builder: (_) => ResultScreen(initialResult: args),
+          );
         }
-        return MaterialPageRoute(
-          builder: (_) => ResultScreen(initialResult: result),
-        );
+        if (args is ResultScreenArgs) {
+          return MaterialPageRoute(
+            builder: (_) => ResultScreen(sessionArgs: args),
+          );
+        }
+        return _missingArgumentRoute('Pose analysis result or backend session');
       case resultSessions:
         return MaterialPageRoute(
           builder: (_) => const ResultSessionsScreen(),

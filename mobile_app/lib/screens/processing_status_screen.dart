@@ -10,6 +10,8 @@ import '../components/screen_container.dart';
 import '../components/screen_header_bar.dart';
 import '../components/status_badge.dart';
 import '../navigation/app_routes.dart';
+import '../services/api_service.dart';
+import '../services/backend_results_service.dart';
 import '../services/mock_pose_tracking_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_typography.dart';
@@ -26,6 +28,7 @@ class ProcessingStatusScreen extends StatefulWidget {
 
 class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
     with SingleTickerProviderStateMixin {
+  final ApiService _api = ApiService();
   final MockPoseTrackingService _poseService = MockPoseTrackingService();
 
   late final AnimationController _pulseController;
@@ -34,7 +37,11 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
 
   double _progress = 0.0;
   bool _isFinalizing = false;
-  PoseAnalysisResult? _result;
+  bool _isPolling = false;
+  PoseAnalysisResult? _legacyResult;
+  DeviceCommandInfo? _command;
+  ResultSessionInfo? _resultSession;
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -43,8 +50,12 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1600),
     )..repeat();
-    _stages = _poseService.getProcessingStages(widget.draft);
-    _startProgress();
+    _stages = _buildProcessingStages();
+    if (_usesBackendPipeline) {
+      _startBackendPolling();
+    } else {
+      _startLegacyProgress();
+    }
   }
 
   @override
@@ -54,8 +65,17 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
     super.dispose();
   }
 
+  bool get _usesBackendPipeline =>
+      widget.draft.commandId != null && widget.draft.deviceId != null;
+
+  bool get _isResultReady => _usesBackendPipeline
+      ? (_resultSession?.resultReadyCount ?? 0) > 0
+      : _legacyResult != null;
+
+  bool get _hasFailed => _usesBackendPipeline && _command?.status == 'failed';
+
   int get _activeStageIndex {
-    if (_result != null || _progress >= 1.0) {
+    if (_isResultReady || _progress >= 1.0) {
       return _stages.length - 1;
     }
 
@@ -63,12 +83,24 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
   }
 
   Duration get _estimatedRemaining {
-    if (_result != null) {
+    if (_isResultReady || _hasFailed) {
       return Duration.zero;
     }
 
-    if (_isFinalizing) {
+    if (!_usesBackendPipeline && _isFinalizing) {
       return const Duration(seconds: 1);
+    }
+
+    if (_usesBackendPipeline) {
+      if (_resultSession != null) {
+        return const Duration(seconds: 2);
+      }
+      return switch (_command?.status) {
+        'acknowledged' => const Duration(seconds: 8),
+        'running' => const Duration(seconds: 5),
+        'completed' => const Duration(seconds: 3),
+        _ => const Duration(seconds: 12),
+      };
     }
 
     final remaining = (1.0 - _progress).clamp(0.0, 1.0);
@@ -76,9 +108,50 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
     return Duration(milliseconds: (ticks * 220) + 420);
   }
 
-  void _startProgress() {
+  List<ProcessingStage> _buildProcessingStages() {
+    return const [
+      ProcessingStage(
+        title: 'Queued on Backend',
+        description:
+            'The mobile app created a session and queued a capture command for the Raspberry Pi.',
+      ),
+      ProcessingStage(
+        title: 'Pi Agent Acknowledged',
+        description:
+            'The edge node claimed the command and is preparing the capture workspace.',
+      ),
+      ProcessingStage(
+        title: 'Capturing + Streaming',
+        description:
+            'Frames are being replayed or captured on the Pi and pushed into the worker pipeline.',
+      ),
+      ProcessingStage(
+        title: 'Worker Processing Frames',
+        description:
+            'Pose overlays and per-frame JSON outputs are being written into the result session.',
+      ),
+      ProcessingStage(
+        title: 'Result Session Ready',
+        description:
+            'The backend session now has processed output that can be opened from the app.',
+      ),
+    ];
+  }
+
+  Future<void> _startBackendPolling() async {
+    await _pollBackendStatus();
+    if (!mounted || _isResultReady || _hasFailed) {
+      return;
+    }
+
+    _timer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      _pollBackendStatus();
+    });
+  }
+
+  void _startLegacyProgress() {
     _timer = Timer.periodic(const Duration(milliseconds: 220), (timer) async {
-      if (!mounted || _isFinalizing || _result != null) {
+      if (!mounted || _isFinalizing || _legacyResult != null) {
         timer.cancel();
         return;
       }
@@ -98,13 +171,13 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
 
       if (nextProgress >= 1.0) {
         timer.cancel();
-        await _finalize();
+        await _finalizeLegacy();
       }
     });
   }
 
   double _stageProgress(int index) {
-    if (_result != null) {
+    if (_isResultReady) {
       return 1.0;
     }
 
@@ -123,7 +196,100 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
     return ((_progress - segmentStart) / segmentSize).clamp(0.0, 1.0);
   }
 
-  Future<void> _finalize() async {
+  Future<void> _pollBackendStatus() async {
+    if (!_usesBackendPipeline || _isPolling) {
+      return;
+    }
+
+    final deviceId = widget.draft.deviceId;
+    final commandId = widget.draft.commandId;
+    if (deviceId == null || commandId == null) {
+      return;
+    }
+
+    setState(() {
+      _isPolling = true;
+    });
+
+    try {
+      final command = await _api.getDeviceCommandStatus(
+        deviceId: deviceId,
+        commandId: commandId,
+      );
+
+      ResultSessionInfo? resultSession = _resultSession;
+      String? resultLookupError;
+      try {
+        resultSession = await _api.getResultSession(widget.draft.sessionId);
+      } on ApiException catch (error) {
+        if (error.statusCode == 404) {
+          resultSession = null;
+        } else {
+          resultLookupError = error.message;
+        }
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _command = command;
+        _resultSession = resultSession;
+        _progress = _progressForBackend(
+          command: command,
+          resultSession: resultSession,
+        );
+        _errorMessage = command.status == 'failed'
+            ? (resultLookupError ??
+                  'The Raspberry Pi command failed before the result session was completed.')
+            : resultLookupError;
+        _isPolling = false;
+      });
+
+      if (command.status == 'failed' ||
+          (resultSession?.resultReadyCount ?? 0) > 0) {
+        _timer?.cancel();
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isPolling = false;
+        _errorMessage = extractApiError(error);
+      });
+    }
+  }
+
+  double _progressForBackend({
+    required DeviceCommandInfo command,
+    required ResultSessionInfo? resultSession,
+  }) {
+    if (command.status == 'failed') {
+      return 0.78;
+    }
+
+    if (resultSession != null) {
+      if (resultSession.resultReadyCount > 0) {
+        return 1.0;
+      }
+      if (resultSession.frameCount > 0) {
+        return 0.86;
+      }
+      return 0.74;
+    }
+
+    return switch (command.status) {
+      'acknowledged' => 0.28,
+      'running' => 0.56,
+      'completed' => 0.72,
+      _ => 0.12,
+    };
+  }
+
+  Future<void> _finalizeLegacy() async {
     setState(() {
       _isFinalizing = true;
     });
@@ -135,7 +301,7 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
     }
 
     setState(() {
-      _result = result;
+      _legacyResult = result;
       _isFinalizing = false;
     });
   }
@@ -147,7 +313,30 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
   }
 
   void _openResult() {
-    final result = _result;
+    if (_usesBackendPipeline) {
+      final resultSession = _resultSession;
+      if (!_isResultReady || resultSession == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'The backend is still waiting for processed frames. Please give the worker a moment.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      Navigator.of(context).pushReplacementNamed(
+        AppRoutes.captureResult,
+        arguments: ResultScreenArgs(
+          sessionId: resultSession.sessionId,
+          initialFrameId: resultSession.latestResultFrameId,
+        ),
+      );
+      return;
+    }
+
+    final result = _legacyResult;
     if (result == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -159,9 +348,10 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
       return;
     }
 
-    Navigator.of(
-      context,
-    ).pushReplacementNamed(AppRoutes.captureResult, arguments: result);
+    Navigator.of(context).pushReplacementNamed(
+      AppRoutes.captureResult,
+      arguments: result,
+    );
   }
 
   IconData _iconForStage(int index) {
@@ -194,25 +384,88 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
     };
   }
 
+  String get _statusLabel {
+    if (_isResultReady) {
+      return 'Result Ready';
+    }
+    if (_hasFailed) {
+      return 'Failed';
+    }
+    if (_usesBackendPipeline) {
+      return switch (_command?.status) {
+        'acknowledged' => 'Claimed',
+        'running' => 'Running',
+        'completed' => 'Packaging',
+        _ => _isPolling ? 'Syncing' : 'Queued',
+      };
+    }
+    return _isFinalizing ? 'Finalizing' : 'AI Running';
+  }
+
+  Color get _statusColor {
+    if (_isResultReady) {
+      return AppColors.success;
+    }
+    if (_hasFailed || _errorMessage != null) {
+      return AppColors.warning;
+    }
+    return AppColors.primary;
+  }
+
+  String get _heroTitle {
+    if (_isResultReady) {
+      return 'Processing Complete';
+    }
+    if (_hasFailed) {
+      return 'Command Failed';
+    }
+    if (_usesBackendPipeline) {
+      if (_resultSession != null && _resultSession!.frameCount > 0) {
+        return 'Worker Processing Frames';
+      }
+      return switch (_command?.status) {
+        'acknowledged' => 'Pi Agent Claimed the Command',
+        'running' => 'Capture Stream Is Running',
+        'completed' => 'Waiting for Result Files',
+        _ => 'Waiting for Raspberry Pi',
+      };
+    }
+    return _stages[_activeStageIndex].title;
+  }
+
+  String get _heroDescription {
+    if (_isResultReady) {
+      return 'Pose overlays, confidence scores, and backend metadata are ready for review.';
+    }
+    if (_hasFailed) {
+      return _errorMessage ??
+          'The command reached a failed state. Check the Pi agent log and backend worker output.';
+    }
+    if (_usesBackendPipeline) {
+      if (_resultSession != null && _resultSession!.frameCount > 0) {
+        return 'The backend session has started receiving processed frames and is packaging the latest result JSON.';
+      }
+      return switch (_command?.status) {
+        'acknowledged' =>
+          'The Pi agent has acknowledged the command and is preparing the replay or capture workflow.',
+        'running' =>
+          'Frames should now be moving through the Pi agent and ZeroMQ worker pipeline.',
+        'completed' =>
+          'The edge command completed; the app is waiting for the result session to finish indexing processed frames.',
+        _ =>
+          'The command is still queued on the backend and waiting for the Raspberry Pi to claim it.',
+      };
+    }
+    return _stages[_activeStageIndex].description;
+  }
+
   @override
   Widget build(BuildContext context) {
     final activeStage = _stages[_activeStageIndex];
     final progressLabel = '${(_progress * 100).round()}%';
-    final stageCounter = _result == null
-        ? '${_activeStageIndex + 1}/${_stages.length}'
-        : '${_stages.length}/${_stages.length}';
-    final statusColor = _result != null ? AppColors.success : AppColors.primary;
-    final statusLabel = _result != null
-        ? 'Result Ready'
-        : _isFinalizing
-        ? 'Finalizing'
-        : 'AI Running';
-    final heroTitle = _result != null
-        ? 'Processing Complete'
-        : activeStage.title;
-    final heroDescription = _result != null
-        ? 'Pose overlays, confidence scores, and feedback are ready for review.'
-        : activeStage.description;
+    final stageCounter = _isResultReady
+        ? '${_stages.length}/${_stages.length}'
+        : '${_activeStageIndex + 1}/${_stages.length}';
 
     return ScreenContainer(
       padding: EdgeInsets.zero,
@@ -227,10 +480,12 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
                     'Tracking the PoseTrack mobile upload, server queue, and pose estimation pipeline in real time.',
                 onBackPressed: _goBackHome,
                 trailing: StatusBadge(
-                  label: statusLabel,
-                  color: statusColor,
-                  icon: _result != null
+                  label: _statusLabel,
+                  color: _statusColor,
+                  icon: _isResultReady
                       ? Icons.check_circle_outline_rounded
+                      : _hasFailed
+                      ? Icons.error_outline_rounded
                       : Icons.motion_photos_on_rounded,
                 ),
               ),
@@ -250,14 +505,14 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
                             children: [
                               _HeroCopy(
                                 stageCounter: stageCounter,
-                                title: heroTitle,
-                                description: heroDescription,
+                                title: _heroTitle,
+                                description: _heroDescription,
                               ),
                               const SizedBox(height: 18),
                               Center(
                                 child: _ProcessingBeacon(
                                   animation: _pulseController,
-                                  isComplete: _result != null,
+                                  isComplete: _isResultReady,
                                 ),
                               ),
                             ],
@@ -270,14 +525,14 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
                             Expanded(
                               child: _HeroCopy(
                                 stageCounter: stageCounter,
-                                title: heroTitle,
-                                description: heroDescription,
+                                title: _heroTitle,
+                                description: _heroDescription,
                               ),
                             ),
                             const SizedBox(width: 16),
                             _ProcessingBeacon(
                               animation: _pulseController,
-                              isComplete: _result != null,
+                              isComplete: _isResultReady,
                             ),
                           ],
                         );
@@ -297,8 +552,10 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                _result != null
+                                _isResultReady
                                     ? 'Inference finished and results packaged.'
+                                    : _hasFailed
+                                    ? 'The backend reported a failed command.'
                                     : 'Live stage: ${activeStage.title}',
                                 style: AppTypography.bodyMedium.copyWith(
                                   color: AppColors.textSecondary,
@@ -311,12 +568,16 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
                         ),
                         const SizedBox(width: 14),
                         _TelemetryMetric(
-                          label: _result != null ? 'Status' : 'ETA',
-                          value: _result != null
+                          label: _isResultReady || _hasFailed ? 'Status' : 'ETA',
+                          value: _isResultReady
                               ? 'READY'
+                              : _hasFailed
+                              ? 'FAILED'
                               : _formatEta(_estimatedRemaining),
-                          accentColor: _result != null
+                          accentColor: _isResultReady
                               ? AppColors.success
+                              : _hasFailed
+                              ? AppColors.warning
                               : AppColors.primary,
                         ),
                       ],
@@ -325,7 +586,7 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
                     _AnimatedProgressBar(
                       progress: _progress,
                       animation: _pulseController,
-                      isComplete: _result != null,
+                      isComplete: _isResultReady,
                     ),
                     const SizedBox(height: 16),
                     Wrap(
@@ -352,8 +613,43 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
                           label: 'Upload',
                           value: widget.draft.autoUpload ? 'Auto' : 'Manual',
                         ),
+                        if (_usesBackendPipeline)
+                          _InfoPill(
+                            icon: Icons.memory_rounded,
+                            label: 'Command',
+                            value: (_command?.status ?? 'pending').toUpperCase(),
+                          ),
+                        if (_usesBackendPipeline && _resultSession != null)
+                          _InfoPill(
+                            icon: Icons.filter_frames_rounded,
+                            label: 'Frames',
+                            value:
+                                '${_resultSession!.frameCount} / ${_resultSession!.resultReadyCount} JSON',
+                          ),
                       ],
                     ),
+                    if (_errorMessage != null) ...[
+                      const SizedBox(height: 16),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: AppColors.warning.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: AppColors.warning.withValues(alpha: 0.22),
+                          ),
+                        ),
+                        child: Text(
+                          _errorMessage!,
+                          style: AppTypography.bodyMedium.copyWith(
+                            color: AppColors.textPrimary,
+                            fontSize: 13.5,
+                            height: 1.24,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -397,9 +693,9 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
                       final index = entry.key;
                       final stage = entry.value;
                       final isComplete =
-                          _result != null || index < _activeStageIndex;
+                          _isResultReady || index < _activeStageIndex;
                       final isActive =
-                          _result == null && index == _activeStageIndex;
+                          !_isResultReady && index == _activeStageIndex;
 
                       return Padding(
                         padding: EdgeInsets.only(
@@ -426,7 +722,7 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
                 child: AppButton(
                   text: 'Open Result',
                   onPressed: _openResult,
-                  isLoading: _isFinalizing,
+                  isLoading: !_usesBackendPipeline && _isFinalizing,
                 ),
               ),
               const SizedBox(height: 12),

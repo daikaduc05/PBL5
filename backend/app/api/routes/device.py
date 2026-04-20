@@ -156,6 +156,36 @@ def create_device_command_route(
     )
 
 
+@router.get("/devices/{device_id}/commands/{command_id}", response_model=CommandStatusUpdateApiResponse)
+def get_command_status_route(
+    device_id: int,
+    command_id: int,
+    db: Session = Depends(get_db),
+) -> CommandStatusUpdateApiResponse | JSONResponse:
+    device = get_device_by_id(db, device_id)
+    if device is None:
+        return _error_response(status_code=404, message="Device not found")
+
+    existing_command = get_command_by_id(db=db, command_id=command_id)
+    if existing_command is None:
+        return _error_response(status_code=404, message="Command not found")
+
+    if existing_command.device_id != device.id:
+        return _error_response(status_code=400, message="Command does not belong to this device")
+
+    return CommandStatusUpdateApiResponse(
+        success=True,
+        message="Command status retrieved successfully",
+        data=CommandStatusUpdateResponse(
+            command_id=existing_command.id,
+            session_id=existing_command.session_id,
+            session_key=_command_session_key(existing_command.session_id),
+            status=existing_command.status,
+            executed_at=existing_command.executed_at,
+        ),
+    )
+
+
 @router.get("/devices/{device_id}/commands/pending", response_model=PendingCommandApiResponse)
 def get_pending_command_route(
     device_id: int,
