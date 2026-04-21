@@ -75,6 +75,7 @@ so the backend result screen can open sessions produced by the real flow.
 ### Docs
 
 - `backend_api_spec.md` now matches the current `session_id/session_key` result flow.
+- `STACK_SETUP_AND_E2E_RUNBOOK.md` now acts as the current stack setup and manual verification guide for Phase 5.
 
 ## MVP Flow Today
 
@@ -94,11 +95,12 @@ The action items from the previous snapshot are now completed:
 4. legacy `/jobs` create path retired so it no longer creates fake processing runs
 5. `Home`, `Connect`, and `Settings` now reflect the real runtime model more closely
 6. the default `Processing -> Result` path is now backend-only instead of quietly dropping into mock finalize/result behavior
+7. a current stack setup and end-to-end runbook now exists so the next verification pass can follow one documented path
 
 ## Optional Next Improvements
 
 1. surface `history/{history_id}.result` in a dedicated mobile detail screen if needed
-2. run the first full end-to-end verification on backend + Pi + worker + mobile app
+2. execute `STACK_SETUP_AND_E2E_RUNBOOK.md` on backend + Pi + worker + mobile app and record the first real pass/fail result
 3. rewrite or retire stale docs such as `OVERVIEW.md`
 4. decide whether the remaining demo-only methods in `MockPoseTrackingService` should be kept for explicit demos or removed entirely
 

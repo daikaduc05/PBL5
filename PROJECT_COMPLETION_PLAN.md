@@ -230,21 +230,23 @@ Tasks:
 Priority files:
 
 - `backend/backend_api_spec.md`
+- `STACK_SETUP_AND_E2E_RUNBOOK.md`
 - `status.md`
 - `OVERVIEW.md`
 - test files to be added in backend and mobile app
 
 Definition of done:
 
-- There is one current setup guide and one current completion roadmap.
+- There is one current setup guide (`STACK_SETUP_AND_E2E_RUNBOOK.md`) and one
+  current completion roadmap.
 - The team can reproduce the full flow without guessing hidden steps.
 
 ## 7. Immediate Next Task
 
 If work resumes from this snapshot, start here:
 
-1. Phase 5: run and document the first full end-to-end verification across app,
-   backend, Pi agent, and worker.
+1. Execute `STACK_SETUP_AND_E2E_RUNBOOK.md` for the first full end-to-end
+   verification across app, backend, Pi agent, and worker.
 2. Clean up or rewrite stale docs that still describe the older demo
    architecture, especially `OVERVIEW.md`.
 3. Decide whether the remaining demo-only helpers inside
