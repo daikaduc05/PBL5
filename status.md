@@ -87,11 +87,14 @@ The action items from the previous snapshot are now completed:
 1. backend API documentation updated
 2. backend history now follows the canonical `session + command + results` flow
 3. old compatibility shim removed
+4. legacy `/jobs` create path retired so it no longer creates fake processing runs
 
 ## Optional Next Improvements
 
 1. surface `history/{history_id}.result` in a dedicated mobile detail screen if needed
-2. replace or retire the remaining stub `/jobs` pipeline now that `history` no longer depends on it
+2. make `Home` reflect real runtime and recent capture data
+3. relabel or redesign `Connect` actions so they match real refresh/status behavior
+4. persist `Settings` across app restarts instead of keeping them in-memory
 
 ## Verification Done
 

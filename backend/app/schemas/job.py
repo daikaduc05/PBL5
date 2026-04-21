@@ -30,10 +30,13 @@ class JobCreateApiResponse(ApiResponse):
 
 class JobStatusResponse(BaseModel):
     job_id: int
+    command_id: int | None = None
     session_id: int
     session_key: str
-    media_id: int
+    media_id: int | None
     device_id: int | None
+    command_type: str | None = None
+    command_status: str | None = None
     task_type: str
     status: JobStatus
     progress: int

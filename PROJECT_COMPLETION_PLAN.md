@@ -29,6 +29,8 @@ The project already has a real technical core:
   `Connect -> Capture -> Processing -> Result`.
 - `History` now reads canonical capture runs from `device_commands` instead of
   the old stub-only `/jobs` path.
+- The legacy `/jobs` create path is retired, and the remaining status endpoint
+  is compatibility-only over canonical command history.
 
 The current real orchestration path is:
 
@@ -51,12 +53,6 @@ Mobile App
 The project is not complete because the system still has important gaps between
 "real MVP demo" and "finished project":
 
-- The canonical real path is `session + command + results`, but `history` still
-  still coexists with the older `/jobs` path in the backend.
-- `/jobs` processing is still stubbed in `backend/app/services/job_service.py`.
-- The Pi agent is still strongest in replay mode through `frames_dir`; live
-  camera capture is not finished.
-- `capture_photo` is not implemented in the Pi agent.
 - `Connect` reads real backend data, but its actions still behave like refresh
   actions rather than true network pairing or scanning.
 - `Home` is still mostly static demo content.
@@ -101,8 +97,9 @@ Make session, command, result, and history describe the same real capture run.
 Current status:
 
 - `History` is already backed by `device_commands`.
-- The remaining work is to retire or realign the old `/jobs` path so the
-  backend no longer carries two competing run models.
+- The old `/jobs` create path is retired.
+- The remaining `/jobs/{job_id}` endpoint is a legacy read-only compatibility
+  view, not a separate execution pipeline.
 
 Tasks:
 
@@ -139,11 +136,9 @@ Move from replay-first behavior to true Raspberry Pi capture support.
 
 Tasks:
 
-- Implement live video capture on the Pi agent.
-- Implement `capture_photo` on the Pi agent.
 - Keep folder replay only as an explicit demo/testing fallback.
 - Confirm command payloads support both replay mode and real camera mode.
-- Make `stop_recording` meaningful for the real capture path.
+- Continue validating the real camera path on actual Pi hardware.
 
 Priority files:
 
@@ -157,6 +152,7 @@ Definition of done:
 - The Pi can execute a real app-triggered image capture.
 - The Pi can execute a real app-triggered short video capture.
 - Replay mode still works, but it is no longer the only practical path.
+- Hardware verification confirms the real camera path is stable.
 
 ### Phase 3: Make Mobile Screens Truthful
 
@@ -244,21 +240,20 @@ Definition of done:
 
 If work resumes from this snapshot, start here:
 
-1. Phase 1: unify the record model and fix the `history` / `jobs` mismatch.
-2. Phase 2: implement real Pi live capture and `capture_photo`.
-3. Phase 3: make `Home`, `Connect`, and `Settings` fully truthful.
-4. Phase 5: run and document the first full end-to-end verification.
+1. Phase 3: make `Home`, `Connect`, and `Settings` fully truthful.
+2. Phase 4: remove or isolate the remaining mock/demo fallback paths.
+3. Phase 5: run and document the first full end-to-end verification.
 
-Do not start with new UI polish. The biggest blockers are still data model
-alignment and real device capture.
+Do not start with UI polish. The biggest blockers are now truthful app state,
+persisted configuration, and real-stack verification.
 
 ## 8. Final Completion Checklist
 
-- [ ] One canonical orchestration path is enforced.
+- [x] One canonical orchestration path is enforced.
 - [ ] App-started capture creates a fully traceable real run record.
-- [ ] `History` is driven by the real flow, not a stub-only job model.
-- [ ] Pi supports real image capture.
-- [ ] Pi supports real video capture.
+- [x] `History` is driven by the real flow, not a stub-only job model.
+- [x] Pi supports real image capture.
+- [x] Pi supports real video capture.
 - [ ] Replay mode is optional fallback only.
 - [ ] `Home` shows live data.
 - [ ] `Connect` actions match their real behavior.

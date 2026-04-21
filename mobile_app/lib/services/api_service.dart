@@ -298,11 +298,6 @@ class ApiService {
     return HistoryDetail.fromJson(data);
   }
 
-  /// Poll job status by ID.
-  Future<Map<String, dynamic>> getJobStatus(int jobId) async {
-    final body = await _getJson('/api/jobs/$jobId');
-    return body['data'] as Map<String, dynamic>? ?? {};
-  }
 
   // ── Internal helpers ────────────────────────────────────────────────────────
 

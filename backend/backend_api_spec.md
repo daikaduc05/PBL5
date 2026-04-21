@@ -337,12 +337,12 @@ Upload media from the mobile app or Raspberry Pi.
 
 ## 7. Job API
 
-The `/jobs` endpoints still exist, but the current processing implementation is
-stubbed and not the main MVP orchestration path.
+The `/jobs` endpoints are now legacy compatibility endpoints. They are not the
+canonical execution model.
 
 ### `POST /jobs`
 
-Create a job record.
+This endpoint is retired and no longer creates a stub processing record.
 
 **Request**
 
@@ -359,41 +359,44 @@ Create a job record.
 
 ```json
 {
-  "success": true,
-  "message": "Job created successfully",
+  "success": false,
+  "message": "The /jobs create endpoint is retired. Use POST /api/session/create and POST /api/devices/{device_id}/commands instead.",
   "data": {
-    "job_id": 20,
     "session_id": 12,
-    "session_key": "session_0012",
-    "status": "queued",
-    "progress": 0
+    "media_id": 5,
+    "device_id": 1,
+    "task_type": "image_pose"
   }
 }
 ```
 
 ### `GET /jobs/{job_id}`
 
-Read job status.
+Read a legacy-compatible status view backed by the canonical command/history
+record when `job_id` matches a capture command id.
 
 **Response**
 
 ```json
 {
   "success": true,
-  "message": "Job retrieved successfully",
+  "message": "Legacy job status retrieved from canonical command history",
   "data": {
-    "job_id": 20,
+    "job_id": 33,
+    "command_id": 33,
     "session_id": 12,
     "session_key": "session_0012",
-    "media_id": 5,
+    "media_id": null,
     "device_id": 1,
-    "task_type": "image_pose",
-    "status": "processing",
-    "progress": 60,
+    "command_type": "start_recording",
+    "command_status": "completed",
+    "task_type": "video_pose",
+    "status": "done",
+    "progress": 100,
     "error_message": null,
     "created_at": "2026-04-20T10:20:00.000000",
     "started_at": "2026-04-20T10:20:02.000000",
-    "finished_at": null
+    "finished_at": "2026-04-20T10:20:07.000000"
   }
 }
 ```
@@ -550,7 +553,9 @@ Read detail for one capture history entry plus attached result-session metadata.
 - The current MVP app should use `session + command + results` as the primary
   orchestration path.
 - `/history` now tracks canonical capture runs through `device_commands`.
-- `/jobs` still exists, but its processing path is currently stubbed.
+- `POST /jobs` is retired and no longer creates a fake processing pipeline.
+- `GET /jobs/{job_id}` is a legacy read-only compatibility view over the
+  canonical command/history model.
 - Result files are served from:
 
 ```text
