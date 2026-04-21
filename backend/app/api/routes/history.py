@@ -9,9 +9,7 @@ from app.schemas.job import (
     HistoryItemResponse,
     HistoryListApiResponse,
 )
-from app.services.job_service import get_job_by_id, list_jobs
-from app.services.result_service import build_history_result_metadata
-from app.services.session_service import build_session_key
+from app.services.history_service import build_history_entry, get_history_command, list_history_commands
 
 router = APIRouter(prefix="/history", tags=["History"])
 
@@ -25,48 +23,58 @@ def _error_response(status_code: int, message: str) -> JSONResponse:
 
 @router.get("", response_model=HistoryListApiResponse)
 def get_history_route(db: Session = Depends(get_db)) -> HistoryListApiResponse:
-    jobs = list_jobs(db)
+    commands = list_history_commands(db)
     return HistoryListApiResponse(
         success=True,
         message="History retrieved successfully",
         data=[
             HistoryItemResponse(
-                job_id=job.id,
-                session_id=job.session_id,
-                session_key=build_session_key(job.session_id),
-                status=job.status,
-                task_type=job.task_type,
-                progress=job.progress,
-                created_at=job.created_at,
+                history_id=entry["history_id"],
+                command_id=entry["command_id"],
+                device_id=entry["device_id"],
+                session_id=entry["session_id"],
+                session_key=entry["session_key"],
+                command_type=entry["command_type"],
+                command_status=entry["command_status"],
+                status=entry["status"],
+                task_type=entry["task_type"],
+                progress=entry["progress"],
+                created_at=entry["created_at"],
             )
-            for job in jobs
+            for entry in (build_history_entry(command) for command in commands)
         ],
     )
 
 
-@router.get("/{job_id}", response_model=HistoryDetailApiResponse)
+@router.get("/{history_id}", response_model=HistoryDetailApiResponse)
 def get_history_detail_route(
-    job_id: int,
+    history_id: int,
     db: Session = Depends(get_db),
 ) -> HistoryDetailApiResponse | JSONResponse:
-    job = get_job_by_id(db, job_id)
-    if job is None:
-        return _error_response(404, "Job not found")
+    command = get_history_command(db, history_id)
+    if command is None:
+        return _error_response(404, "History entry not found")
+
+    entry = build_history_entry(command)
 
     return HistoryDetailApiResponse(
         success=True,
-        message="Job detail retrieved successfully",
+        message="History entry retrieved successfully",
         data=HistoryDetailResponse(
-            job_id=job.id,
-            session_id=job.session_id,
-            session_key=build_session_key(job.session_id),
-            status=job.status,
-            task_type=job.task_type,
-            progress=job.progress,
-            error_message=job.error_message,
-            created_at=job.created_at,
-            started_at=job.started_at,
-            finished_at=job.finished_at,
-            result=build_history_result_metadata(build_session_key(job.session_id)),
+            history_id=entry["history_id"],
+            command_id=entry["command_id"],
+            device_id=entry["device_id"],
+            session_id=entry["session_id"],
+            session_key=entry["session_key"],
+            command_type=entry["command_type"],
+            command_status=entry["command_status"],
+            status=entry["status"],
+            task_type=entry["task_type"],
+            progress=entry["progress"],
+            error_message=entry["error_message"],
+            created_at=entry["created_at"],
+            started_at=entry["started_at"],
+            finished_at=entry["finished_at"],
+            result=entry["result"],
         ),
     )

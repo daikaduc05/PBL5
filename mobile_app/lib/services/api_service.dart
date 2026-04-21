@@ -94,18 +94,26 @@ class DeviceCommandInfo {
 }
 
 class HistoryItem {
-  final int jobId;
+  final int historyId;
+  final int commandId;
+  final int? deviceId;
   final int sessionId;
   final String sessionKey;
+  final String commandType;
+  final String commandStatus;
   final String status;
   final String taskType;
   final int progress;
   final DateTime createdAt;
 
   const HistoryItem({
-    required this.jobId,
+    required this.historyId,
+    required this.commandId,
+    required this.deviceId,
     required this.sessionId,
     required this.sessionKey,
+    required this.commandType,
+    required this.commandStatus,
     required this.status,
     required this.taskType,
     required this.progress,
@@ -113,9 +121,13 @@ class HistoryItem {
   });
 
   factory HistoryItem.fromJson(Map<String, dynamic> json) => HistoryItem(
-    jobId: json['job_id'] as int,
+    historyId: json['history_id'] as int,
+    commandId: json['command_id'] as int,
+    deviceId: json['device_id'] as int?,
     sessionId: json['session_id'] as int,
     sessionKey: json['session_key'] as String,
+    commandType: json['command_type'] as String? ?? 'unknown',
+    commandStatus: json['command_status'] as String? ?? 'pending',
     status: json['status'] as String,
     taskType: json['task_type'] as String,
     progress: json['progress'] as int? ?? 0,
@@ -125,9 +137,13 @@ class HistoryItem {
 }
 
 class HistoryDetail {
-  final int jobId;
+  final int historyId;
+  final int commandId;
+  final int? deviceId;
   final int sessionId;
   final String sessionKey;
+  final String commandType;
+  final String commandStatus;
   final String status;
   final String taskType;
   final int progress;
@@ -138,9 +154,13 @@ class HistoryDetail {
   final Map<String, dynamic>? result;
 
   const HistoryDetail({
-    required this.jobId,
+    required this.historyId,
+    required this.commandId,
+    required this.deviceId,
     required this.sessionId,
     required this.sessionKey,
+    required this.commandType,
+    required this.commandStatus,
     required this.status,
     required this.taskType,
     required this.progress,
@@ -152,9 +172,13 @@ class HistoryDetail {
   });
 
   factory HistoryDetail.fromJson(Map<String, dynamic> json) => HistoryDetail(
-    jobId: json['job_id'] as int,
+    historyId: json['history_id'] as int,
+    commandId: json['command_id'] as int,
+    deviceId: json['device_id'] as int?,
     sessionId: json['session_id'] as int,
     sessionKey: json['session_key'] as String,
+    commandType: json['command_type'] as String? ?? 'unknown',
+    commandStatus: json['command_status'] as String? ?? 'pending',
     status: json['status'] as String,
     taskType: json['task_type'] as String,
     progress: json['progress'] as int? ?? 0,
@@ -254,7 +278,7 @@ class ApiService {
     );
   }
 
-  /// Retrieve job processing history (all jobs, newest first).
+  /// Retrieve canonical capture history entries (newest first).
   Future<List<HistoryItem>> getHistory() async {
     final body = await _getJson('/api/history');
     final raw = body['data'] as List<dynamic>? ?? const [];
@@ -264,9 +288,9 @@ class ApiService {
         .toList(growable: false);
   }
 
-  /// Retrieve detail of a single job.
-  Future<HistoryDetail> getHistoryDetail(int jobId) async {
-    final body = await _getJson('/api/history/$jobId');
+  /// Retrieve detail of a single history entry.
+  Future<HistoryDetail> getHistoryDetail(int historyId) async {
+    final body = await _getJson('/api/history/$historyId');
     final data = body['data'] as Map<String, dynamic>?;
     if (data == null) {
       throw const ApiException('History detail data is missing');

@@ -27,6 +27,8 @@ The project already has a real technical core:
   `backend/workers/results/<session_key>`.
 - Mobile app main MVP path is partially real:
   `Connect -> Capture -> Processing -> Result`.
+- `History` now reads canonical capture runs from `device_commands` instead of
+  the old stub-only `/jobs` path.
 
 The current real orchestration path is:
 
@@ -50,7 +52,7 @@ The project is not complete because the system still has important gaps between
 "real MVP demo" and "finished project":
 
 - The canonical real path is `session + command + results`, but `history` still
-  depends on the older `jobs` model.
+  still coexists with the older `/jobs` path in the backend.
 - `/jobs` processing is still stubbed in `backend/app/services/job_service.py`.
 - The Pi agent is still strongest in replay mode through `frames_dir`; live
   camera capture is not finished.
@@ -96,10 +98,14 @@ This means:
 Goal:
 Make session, command, result, and history describe the same real capture run.
 
+Current status:
+
+- `History` is already backed by `device_commands`.
+- The remaining work is to retire or realign the old `/jobs` path so the
+  backend no longer carries two competing run models.
+
 Tasks:
 
-- Refactor backend history so it is driven by real app-started runs, not by the
-  old stub-only job path.
 - Ensure every app-started capture has a traceable record containing at least:
   `session_id`, `session_key`, `device_id`, `command_id`, capture mode, start
   time, completion state, and result summary.
@@ -113,6 +119,7 @@ Priority files:
 - `backend/app/api/routes/history.py`
 - `backend/app/services/job_service.py`
 - `backend/app/api/routes/job.py`
+- `backend/app/services/history_service.py`
 - `mobile_app/lib/services/api_service.dart`
 - `mobile_app/lib/screens/history_screen.dart`
 
@@ -122,6 +129,8 @@ Definition of done:
   manual or fake `/jobs` step.
 - `History` and `Result` both point to the same real session run.
 - No user-facing screen depends on stub job progress to look correct.
+- The remaining `/jobs` path is either removed from the user flow or explicitly
+  documented as legacy-only.
 
 ### Phase 2: Finish Real Pi Capture Modes
 

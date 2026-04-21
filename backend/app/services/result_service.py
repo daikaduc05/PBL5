@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import re
 from pathlib import Path
 from typing import Any
@@ -100,12 +101,17 @@ def list_result_sessions() -> list[str]:
 def build_history_result_metadata(session_id: str) -> dict[str, Any]:
     session_dir = get_session_dir(session_id)
     frames: list[dict[str, int | str | None]] = []
+    updated_at: str | None = None
 
     if session_dir is not None:
         frames = [
             build_frame_payload(frame_id=frame_id, file_paths=file_paths)
             for frame_id, file_paths in collect_frame_files(session_dir).items()
         ]
+        file_paths = [file_path for file_path in session_dir.iterdir() if file_path.is_file()]
+        if file_paths:
+            latest_updated_at = max(file_path.stat().st_mtime for file_path in file_paths)
+            updated_at = datetime.fromtimestamp(latest_updated_at, tz=timezone.utc).isoformat()
 
     latest_frame = frames[-1] if frames else None
 
@@ -126,6 +132,7 @@ def build_history_result_metadata(session_id: str) -> dict[str, Any]:
         "frame_count": len(frames),
         "pose_ready_count": sum(1 for frame in frames if frame["pose_image_url"] is not None),
         "result_ready_count": sum(1 for frame in frames if frame["result_json_path"] is not None),
+        "updated_at": updated_at,
         "latest_frame": latest_frame,
         "latest_pose_frame": latest_pose_frame,
         "latest_result_frame": latest_result_frame,

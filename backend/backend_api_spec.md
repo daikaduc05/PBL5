@@ -448,7 +448,10 @@ Read the worker JSON result for one frame.
 
 ### `GET /history`
 
-List jobs in reverse chronological order.
+List canonical capture history entries in reverse chronological order.
+
+History is now backed by `device_commands` for real app-started runs, not by
+the old stub-only `/jobs` execution path.
 
 **Response**
 
@@ -458,11 +461,15 @@ List jobs in reverse chronological order.
   "message": "History retrieved successfully",
   "data": [
     {
-      "job_id": 20,
+      "history_id": 33,
+      "command_id": 33,
+      "device_id": 1,
       "session_id": 12,
       "session_key": "session_0012",
+      "command_type": "start_recording",
+      "command_status": "completed",
       "status": "done",
-      "task_type": "image_pose",
+      "task_type": "video_pose",
       "progress": 100,
       "created_at": "2026-04-20T10:20:00.000000"
     }
@@ -470,22 +477,26 @@ List jobs in reverse chronological order.
 }
 ```
 
-### `GET /history/{job_id}`
+### `GET /history/{history_id}`
 
-Read detail for one job plus attached result-session metadata.
+Read detail for one capture history entry plus attached result-session metadata.
 
 **Response**
 
 ```json
 {
   "success": true,
-  "message": "Job detail retrieved successfully",
+  "message": "History entry retrieved successfully",
   "data": {
-    "job_id": 20,
+    "history_id": 33,
+    "command_id": 33,
+    "device_id": 1,
     "session_id": 12,
     "session_key": "session_0012",
+    "command_type": "start_recording",
+    "command_status": "completed",
     "status": "done",
-    "task_type": "image_pose",
+    "task_type": "video_pose",
     "progress": 100,
     "error_message": null,
     "created_at": "2026-04-20T10:20:00.000000",
@@ -498,6 +509,7 @@ Read detail for one job plus attached result-session metadata.
       "frame_count": 16,
       "pose_ready_count": 16,
       "result_ready_count": 16,
+      "updated_at": "2026-04-20T10:20:07+00:00",
       "latest_frame": {
         "frame_id": 16,
         "pose_image_path": "backend/workers/results/session_0012/frame_16_pose.jpg",
@@ -525,8 +537,8 @@ Read detail for one job plus attached result-session metadata.
 
 - The current MVP app should use `session + command + results` as the primary
   orchestration path.
-- `/jobs` and `/history` are still useful for tracking records, but `/jobs`
-  processing is currently stubbed.
+- `/history` now tracks canonical capture runs through `device_commands`.
+- `/jobs` still exists, but its processing path is currently stubbed.
 - Result files are served from:
 
 ```text

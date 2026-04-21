@@ -48,9 +48,13 @@ class JobStatusApiResponse(ApiResponse):
 
 
 class HistoryItemResponse(BaseModel):
-    job_id: int
+    history_id: int
+    command_id: int
+    device_id: int | None
     session_id: int
     session_key: str
+    command_type: str
+    command_status: str
     status: JobStatus
     task_type: str
     progress: int
@@ -62,9 +66,13 @@ class HistoryListApiResponse(ApiResponse):
 
 
 class HistoryDetailResponse(BaseModel):
-    job_id: int
+    history_id: int
+    command_id: int
+    device_id: int | None
     session_id: int
     session_key: str
+    command_type: str
+    command_status: str
     status: JobStatus
     task_type: str
     progress: int

@@ -2,7 +2,7 @@
 
 ## Date
 
-2026-04-20
+2026-04-21
 
 ## Current State
 
@@ -57,8 +57,9 @@ so the backend result screen can open sessions produced by the real flow.
 
 ### History
 
-- `History` now routes to the exact backend result session for each job item.
-- Backend `history/{job_id}` now includes attached result-session metadata.
+- `History` now reads canonical capture runs from `device_commands` instead of the old stub-only `jobs` flow.
+- Backend `history/{history_id}` now exposes `command_id`, raw `command_status`, mapped history `status`, and attached result-session metadata.
+- Mobile `History` now labels entries as real runs rather than fake jobs.
 
 ### Docs
 
@@ -77,18 +78,16 @@ This flow is now backed by real API calls for the main orchestration path.
 The action items from the previous snapshot are now completed:
 
 1. backend API documentation updated
-2. backend `history/{job_id}` attaches result metadata
+2. backend history now follows the canonical `session + command + results` flow
 3. old compatibility shim removed
 
 ## Optional Next Improvements
 
-1. surface `history/{job_id}.result` in a dedicated mobile detail screen if needed
-2. replace the stub `/jobs` pipeline with the real worker orchestration path
+1. surface `history/{history_id}.result` in a dedicated mobile detail screen if needed
+2. replace or retire the remaining stub `/jobs` pipeline now that `history` no longer depends on it
 3. add Pi live-camera capture mode beyond folder replay
 
 ## Verification Done
 
 - `python -m compileall backend/app`
-- `dart analyze` on the modified Flutter files
-
-Both checks passed.
+- `dart analyze` was attempted for the modified Flutter files, but it timed out in this environment and still needs a clean rerun locally.

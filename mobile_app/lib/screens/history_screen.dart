@@ -165,7 +165,7 @@ class _HistoryHeader extends StatelessWidget {
                     style: AppTypography.h2.copyWith(fontSize: 26)),
                 const SizedBox(height: 4),
                 Text(
-                  'All AI jobs from the backend, newest first.',
+                  'All capture runs from the canonical backend flow, newest first.',
                   style: AppTypography.bodyMedium.copyWith(
                     fontSize: 13,
                     color: AppColors.textSecondary,
@@ -284,7 +284,7 @@ class _HistoryCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Job #${item.jobId}',
+                          'Run #${item.historyId}',
                           style: AppTypography.h3.copyWith(fontSize: 16),
                         ),
                         const SizedBox(height: 3),
@@ -410,11 +410,11 @@ class _EmptyPanel extends StatelessWidget {
                   size: 34, color: AppColors.textMuted),
             ),
             const SizedBox(height: 20),
-            Text('No Jobs Yet',
+            Text('No Runs Yet',
                 style: AppTypography.h3.copyWith(fontSize: 20)),
             const SizedBox(height: 10),
             Text(
-              'Go to Capture to start a recording session. Processed jobs will appear here.',
+              'Go to Capture to start a real session. In-progress and completed runs will appear here.',
               textAlign: TextAlign.center,
               style: AppTypography.bodyMedium.copyWith(
                 color: AppColors.textSecondary,
