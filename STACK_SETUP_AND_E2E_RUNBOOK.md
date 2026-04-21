@@ -134,6 +134,17 @@ pip install requests pyzmq opencv-python
 If the Pi is also running backend code from this repo, installing
 `backend/requirements.txt` plus `requests` is the safer option.
 
+For Raspberry Pi CSI cameras that are exposed through `rpicam/libcamera` rather
+than `/dev/video0`, also install:
+
+```bash
+sudo apt update
+sudo apt install -y python3-picamera2 rpicam-apps v4l-utils
+```
+
+The current Pi agent will try `Picamera2` first for live camera capture, then
+fall back to OpenCV/V4L2 if needed.
+
 ## 8. Flutter Setup
 
 From `mobile_app`:

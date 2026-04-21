@@ -37,6 +37,7 @@ pending -> acknowledged -> running -> completed | failed
   - live camera photo capture
   - live camera video streaming
   - background capture jobs so `stop_recording` can stop an active run
+  - Raspberry Pi CSI camera fallback through `Picamera2` when `/dev/video0` is not available but `rpicam/libcamera` is
 
 ### Mobile App
 

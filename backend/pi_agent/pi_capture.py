@@ -93,8 +93,26 @@ def capture_photo_to_zmq(
     warmup_seconds: float = 1.0,
     logger: LogFn | None = None,
 ) -> int:
+    picamera2_error: Exception | None = None
+
+    try:
+        return _capture_photo_with_picamera2_to_zmq(
+            host=host,
+            port=port,
+            session_id=session_id,
+            device_id=device_id,
+            camera_index=camera_index,
+            width=width,
+            height=height,
+            warmup_seconds=warmup_seconds,
+            logger=logger,
+        )
+    except RuntimeError as exc:
+        picamera2_error = exc
+        _log(logger, f"Picamera2 still capture failed, falling back to OpenCV: {exc}")
+
     cv2 = _import_cv2()
-    camera = _open_camera(
+    camera = _open_opencv_camera(
         cv2=cv2,
         camera_index=camera_index,
         width=width,
@@ -106,6 +124,11 @@ def capture_photo_to_zmq(
         _warm_up_camera(camera, warmup_seconds)
         success, frame = camera.read()
         if not success or frame is None:
+            if picamera2_error is not None:
+                raise RuntimeError(
+                    "Camera did not return a frame for capture_photo. "
+                    f"Picamera2 attempt also failed: {picamera2_error}"
+                ) from picamera2_error
             raise RuntimeError("Camera did not return a frame for capture_photo.")
 
         frame_bytes = _encode_frame_to_jpeg(cv2, frame)
@@ -141,8 +164,29 @@ def capture_video_to_zmq(
     stop_event=None,
     logger: LogFn | None = None,
 ) -> int:
+    picamera2_error: Exception | None = None
+
+    try:
+        return _capture_video_with_picamera2_to_zmq(
+            host=host,
+            port=port,
+            session_id=session_id,
+            duration_seconds=duration_seconds,
+            device_id=device_id,
+            camera_index=camera_index,
+            width=width,
+            height=height,
+            fps=fps,
+            warmup_seconds=warmup_seconds,
+            stop_event=stop_event,
+            logger=logger,
+        )
+    except RuntimeError as exc:
+        picamera2_error = exc
+        _log(logger, f"Picamera2 video capture failed, falling back to OpenCV: {exc}")
+
     cv2 = _import_cv2()
-    camera = _open_camera(
+    camera = _open_opencv_camera(
         cv2=cv2,
         camera_index=camera_index,
         width=width,
@@ -168,6 +212,11 @@ def capture_video_to_zmq(
             if not success or frame is None:
                 read_failures += 1
                 if read_failures >= 5:
+                    if picamera2_error is not None:
+                        raise RuntimeError(
+                            "Camera repeatedly failed to provide video frames. "
+                            f"Picamera2 attempt also failed: {picamera2_error}"
+                        ) from picamera2_error
                     raise RuntimeError("Camera repeatedly failed to provide video frames.")
                 time.sleep(0.05)
                 continue
@@ -256,7 +305,19 @@ def _import_cv2():
     return cv2
 
 
-def _open_camera(
+def _import_picamera2():
+    try:
+        from picamera2 import Picamera2  # type: ignore
+    except ImportError as exc:  # pragma: no cover - depends on runtime environment
+        raise RuntimeError(
+            "Picamera2 is not installed. Install python3-picamera2 on the Raspberry Pi "
+            "or provide a V4L2-compatible /dev/video* camera for OpenCV."
+        ) from exc
+
+    return Picamera2
+
+
+def _open_opencv_camera(
     cv2,
     camera_index: int,
     width: int | None = None,
@@ -276,6 +337,180 @@ def _open_camera(
         camera.set(cv2.CAP_PROP_FPS, fps)
 
     return camera
+
+
+def _capture_photo_with_picamera2_to_zmq(
+    host: str,
+    port: int,
+    session_id: str,
+    device_id: int | None,
+    camera_index: int,
+    width: int | None,
+    height: int | None,
+    warmup_seconds: float,
+    logger: LogFn | None,
+) -> int:
+    cv2 = _import_cv2()
+    Picamera2 = _import_picamera2()
+    socket, context = _open_push_socket(host, port)
+    picamera2 = None
+
+    try:
+        picamera2 = Picamera2(camera_num=camera_index)
+        configuration = picamera2.create_still_configuration(
+            main={
+                "size": _resolve_picamera_size(width, height, default=(1296, 972)),
+                "format": "RGB888",
+            },
+            buffer_count=2,
+        )
+        picamera2.configure(configuration)
+        picamera2.start()
+        time.sleep(max(warmup_seconds, 1.0))
+
+        frame = picamera2.capture_array("main")
+        frame = _normalize_frame_for_jpeg(cv2, frame)
+        if frame is None:
+            raise RuntimeError("Picamera2 returned an empty frame for capture_photo.")
+
+        frame_bytes = _encode_frame_to_jpeg(cv2, frame)
+        _send_frame_bytes(
+            socket=socket,
+            session_id=session_id,
+            frame_id=1,
+            frame_bytes=frame_bytes,
+            device_id=device_id,
+            message_type="capture_photo",
+            filename="camera_photo.jpg",
+            source="camera",
+        )
+        _log(logger, "Picamera2 photo captured and sent.")
+        return 1
+    except Exception as exc:
+        raise RuntimeError(f"Picamera2 still capture failed: {exc}") from exc
+    finally:
+        _close_picamera2(picamera2)
+        socket.close(0)
+        context.term()
+
+
+def _capture_video_with_picamera2_to_zmq(
+    host: str,
+    port: int,
+    session_id: str,
+    duration_seconds: float,
+    device_id: int | None,
+    camera_index: int,
+    width: int | None,
+    height: int | None,
+    fps: float,
+    warmup_seconds: float,
+    stop_event,
+    logger: LogFn | None,
+) -> int:
+    cv2 = _import_cv2()
+    Picamera2 = _import_picamera2()
+    socket, context = _open_push_socket(host, port)
+    picamera2 = None
+    frame_interval_seconds = 1.0 / max(fps, 1.0)
+    deadline = time.monotonic() + max(duration_seconds, 1.0)
+    frame_id = 0
+
+    try:
+        picamera2 = Picamera2(camera_num=camera_index)
+        frame_duration = int(1_000_000 / max(fps, 1.0))
+        configuration = picamera2.create_video_configuration(
+            main={
+                "size": _resolve_picamera_size(width, height, default=(640, 480)),
+                "format": "RGB888",
+            },
+            controls={"FrameDurationLimits": (frame_duration, frame_duration)},
+            buffer_count=4,
+        )
+        picamera2.configure(configuration)
+        picamera2.start()
+        time.sleep(max(warmup_seconds, 1.0))
+
+        while time.monotonic() < deadline:
+            if stop_event is not None and stop_event.is_set():
+                _log(logger, "Picamera2 live capture stopped by stop event.")
+                break
+
+            loop_started_at = time.monotonic()
+            frame = _normalize_frame_for_jpeg(cv2, picamera2.capture_array("main"))
+            if frame is None:
+                raise RuntimeError("Picamera2 returned an empty frame during video capture.")
+
+            frame_id += 1
+            frame_bytes = _encode_frame_to_jpeg(cv2, frame)
+            _send_frame_bytes(
+                socket=socket,
+                session_id=session_id,
+                frame_id=frame_id,
+                frame_bytes=frame_bytes,
+                device_id=device_id,
+                message_type="frame_stream_camera",
+                filename=f"camera_frame_{frame_id}.jpg",
+                source="camera",
+            )
+            _log(logger, f"Picamera2 live camera frame {frame_id} sent.")
+
+            remaining_sleep = frame_interval_seconds - (time.monotonic() - loop_started_at)
+            if remaining_sleep > 0:
+                if stop_event is not None:
+                    stop_event.wait(remaining_sleep)
+                else:
+                    time.sleep(remaining_sleep)
+    except Exception as exc:
+        raise RuntimeError(f"Picamera2 video capture failed: {exc}") from exc
+    finally:
+        _close_picamera2(picamera2)
+        socket.close(0)
+        context.term()
+
+    if frame_id == 0:
+        raise RuntimeError("Picamera2 did not capture any video frames.")
+
+    return frame_id
+
+
+def _resolve_picamera_size(
+    width: int | None,
+    height: int | None,
+    default: tuple[int, int],
+) -> tuple[int, int]:
+    requested_width = width or default[0]
+    requested_height = height or default[1]
+    return requested_width, requested_height
+
+
+def _normalize_frame_for_jpeg(cv2, frame):
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return None
+
+    if len(frame.shape) == 3:
+        channels = frame.shape[2]
+        if channels == 3:
+            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        if channels == 4:
+            return cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+
+    return frame
+
+
+def _close_picamera2(picamera2) -> None:
+    if picamera2 is None:
+        return
+
+    try:
+        picamera2.stop()
+    except Exception:
+        pass
+
+    try:
+        picamera2.close()
+    except Exception:
+        pass
 
 
 def _warm_up_camera(camera, warmup_seconds: float) -> None:
