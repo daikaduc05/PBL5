@@ -52,6 +52,7 @@ pending -> acknowledged -> running -> completed | failed
 - `History` now opens the exact backend session via `session_key` instead of jumping to the generic results list.
 - `Settings` now persist the configured server, Raspberry Pi, and capture defaults locally across app restarts.
 - Removed the old `BackendResultsService` compatibility shim after cleaning imports.
+- Fixed a Windows desktop polling bug where `ApiService` could close `HttpClient` before fully reading `/api/*` responses, which made the app report intermittent offline errors even while the backend was returning `200 OK`.
 - Fixed backend result contract mismatch:
 
 ```text

@@ -310,7 +310,7 @@ class ApiService {
       final request = await client.getUrl(uri);
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       final response = await request.close();
-      return _parseResponse(response);
+      return await _parseResponse(response);
     } on SocketException {
       throw ApiException(
         'Cannot reach backend at ${uri.host}:${uri.port}. Check the server IP and Wi-Fi.',
@@ -339,7 +339,7 @@ class ApiService {
         ..set(HttpHeaders.acceptHeader, 'application/json');
       request.write(jsonEncode(body));
       final response = await request.close();
-      return _parseResponse(response);
+      return await _parseResponse(response);
     } on SocketException {
       throw ApiException(
         'Cannot reach backend at ${uri.host}:${uri.port}.',
