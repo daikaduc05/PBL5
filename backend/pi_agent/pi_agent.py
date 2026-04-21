@@ -1,67 +1,68 @@
 #!/usr/bin/env python3
-"""
-PoseTrack Pi Agent
-==================
-Chạy trên Raspberry Pi. Vòng lặp chính:
-  1. Đăng ký device với backend (nếu chưa có device_id).
-  2. Mỗi 3 giây:
-     - Gửi heartbeat.
-     - Polling lấy pending command.
-     - Nếu có command → thực thi → PATCH status về backend.
-
-Cách dùng:
-  python pi_agent.py --backend http://<IP>:8002 --device-name "Pi4B" --device-code "pi-001"
-
-Biến môi trường:
-  POSETRACK_BACKEND  : URL backend, mặc định http://localhost:8002
-  POSETRACK_DEVICE_ID: ID device nếu đã đăng ký trước
-  POSETRACK_TOKEN    : auth_token nếu đã đăng ký trước
-"""
-
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import subprocess
-import sys
+import threading
 import time
+from dataclasses import dataclass
+from typing import Any
 
 import requests
 
-# ── Cấu hình ────────────────────────────────────────────────────────────────
+from pi_capture import (
+    capture_photo_to_zmq,
+    capture_video_to_zmq,
+    has_replay_frames,
+    replay_frames_to_zmq,
+)
+
 
 DEFAULT_BACKEND = os.getenv("POSETRACK_BACKEND", "http://localhost:8002")
-POLL_INTERVAL = 3  # giây giữa mỗi lần poll
-REQUEST_TIMEOUT = 5  # timeout cho từng HTTP request
+POLL_INTERVAL = 3
+REQUEST_TIMEOUT = 5
+DEFAULT_CAMERA_INDEX = int(os.getenv("POSETRACK_CAMERA_INDEX", "0"))
+DEFAULT_CAMERA_FPS = float(os.getenv("POSETRACK_CAMERA_FPS", "10"))
+DEFAULT_CAMERA_WARMUP_SECONDS = float(os.getenv("POSETRACK_CAMERA_WARMUP", "1.0"))
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+@dataclass
+class ActiveCapture:
+    command_id: int
+    session_key: str
+    command_type: str
+    thread: threading.Thread
+    stop_event: threading.Event
 
-def log(msg: str) -> None:
-    ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
+
+_ACTIVE_CAPTURE_LOCK = threading.Lock()
+_ACTIVE_CAPTURE: ActiveCapture | None = None
+
+
+def log(message: str) -> None:
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}", flush=True)
 
 
 def api(method: str, backend: str, path: str, **kwargs) -> dict:
     url = f"{backend.rstrip('/')}{path}"
     kwargs.setdefault("timeout", REQUEST_TIMEOUT)
-    resp = requests.request(method, url, **kwargs)
-    resp.raise_for_status()
-    return resp.json()
+    response = requests.request(method, url, **kwargs)
+    response.raise_for_status()
+    return response.json()
 
-
-# ── Lifecycle functions ───────────────────────────────────────────────────────
 
 def register_device(backend: str, device_name: str, device_code: str) -> tuple[int, str]:
-    """Đăng ký device, trả về (device_id, auth_token)."""
     data = api(
-        "POST", backend, "/api/devices/register",
+        "POST",
+        backend,
+        "/api/devices/register",
         json={"device_name": device_name, "device_code": device_code},
     )
     device_id = data["data"]["device_id"]
     auth_token = data["data"]["auth_token"]
-    log(f"Registered → device_id={device_id}")
+    log(f"Registered device_id={device_id}")
     return device_id, auth_token
 
 
@@ -71,149 +72,287 @@ def send_heartbeat(backend: str, device_id: int) -> None:
 
 def fetch_pending_command(backend: str, device_id: int) -> dict | None:
     data = api("GET", backend, f"/api/devices/{device_id}/commands/pending")
-    return data.get("data")  # None nếu không có dispatchable command
+    return data.get("data")
 
 
 def update_command_status(backend: str, device_id: int, command_id: int, status: str) -> None:
-    """Báo backend trạng thái command trong lifecycle xử lý."""
     api(
         "PATCH",
         backend,
         f"/api/devices/{device_id}/commands/{command_id}/status",
         json={"status": status},
     )
-    log(f"Command {command_id} → {status}")
+    log(f"Command {command_id} -> {status}")
 
 
-# ── Command handlers ──────────────────────────────────────────────────────────
+def _load_command_payload(command: dict[str, Any]) -> dict[str, Any]:
+    raw_payload = command.get("command_payload")
+    if raw_payload is None:
+        return {}
 
-def _resolve_session_key(command: dict, payload: dict) -> str:
-    payload_session_key = payload.get("session_key")
-    if payload_session_key:
-        return str(payload_session_key)
+    if isinstance(raw_payload, dict):
+        return raw_payload
 
-    payload_session_id = payload.get("session_id")
-    if payload_session_id:
-        return str(payload_session_id)
+    if isinstance(raw_payload, str):
+        try:
+            decoded_payload = json.loads(raw_payload)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(decoded_payload, dict):
+            return decoded_payload
 
-    command_session_key = command.get("session_key")
-    if command_session_key:
-        return str(command_session_key)
+    return {}
 
-    command_session_id = command.get("session_id")
-    if command_session_id is not None:
-        return f"sess_{int(command_session_id):06d}"
+
+def _resolve_session_key(command: dict[str, Any], payload: dict[str, Any]) -> str:
+    for candidate in (
+        payload.get("session_key"),
+        payload.get("session_id"),
+        command.get("session_key"),
+        command.get("session_id"),
+    ):
+        if candidate is not None:
+            if isinstance(candidate, int):
+                return f"sess_{candidate:06d}"
+            return str(candidate)
 
     return "default_session"
 
 
-def handle_start_recording(command: dict, backend: str, device_id: int) -> None:
-    command_id: int = command["command_id"]
-    payload_str: str | None = command.get("command_payload")
+def _resolve_capture_source(payload: dict[str, Any], frames_dir: str | None) -> str:
+    source = str(payload.get("capture_source", "auto")).strip().lower()
 
-    log(f"Executing start_recording (command_id={command_id})")
-    update_command_status(backend, device_id, command_id, "running")
+    if source == "replay":
+        return "replay"
+    if source == "camera":
+        return "camera"
+
+    if has_replay_frames(frames_dir):
+        return "replay"
+    return "camera"
+
+
+def _resolve_capture_duration_seconds(payload: dict[str, Any]) -> float:
+    for key in ("actual_duration_seconds", "target_duration_seconds", "duration_seconds"):
+        value = payload.get(key)
+        try:
+            duration = float(value)
+        except (TypeError, ValueError):
+            continue
+        if duration > 0:
+            return duration
+
+    return 5.0
+
+
+def _resolve_int(payload: dict[str, Any], key: str, default: int | None = None) -> int | None:
+    value = payload.get(key, default)
+    if value is None:
+        return None
 
     try:
-        payload: dict = json.loads(payload_str) if payload_str else {}
-    except json.JSONDecodeError:
-        payload = {}
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
-    frames_dir: str | None = payload.get("frames_dir")
-    zmq_host: str = payload.get("zmq_host", "localhost")
-    zmq_port: int = int(payload.get("zmq_port", 5555))
+
+def _resolve_float(payload: dict[str, Any], key: str, default: float) -> float:
+    value = payload.get(key, default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_active_capture() -> ActiveCapture | None:
+    with _ACTIVE_CAPTURE_LOCK:
+        if _ACTIVE_CAPTURE is None:
+            return None
+        if _ACTIVE_CAPTURE.thread.is_alive():
+            return _ACTIVE_CAPTURE
+        return None
+
+
+def _register_active_capture(active_capture: ActiveCapture) -> bool:
+    global _ACTIVE_CAPTURE
+
+    with _ACTIVE_CAPTURE_LOCK:
+        if _ACTIVE_CAPTURE is not None and _ACTIVE_CAPTURE.thread.is_alive():
+            return False
+
+        _ACTIVE_CAPTURE = active_capture
+        return True
+
+
+def _clear_active_capture(command_id: int) -> None:
+    global _ACTIVE_CAPTURE
+
+    with _ACTIVE_CAPTURE_LOCK:
+        if _ACTIVE_CAPTURE is not None and _ACTIVE_CAPTURE.command_id == command_id:
+            _ACTIVE_CAPTURE = None
+
+
+def _run_capture_job(
+    command: dict[str, Any],
+    backend: str,
+    device_id: int,
+    stop_event: threading.Event,
+) -> None:
+    command_id = int(command["command_id"])
+    payload = _load_command_payload(command)
     session_key = _resolve_session_key(command, payload)
+    frames_dir = payload.get("frames_dir")
+    frames_dir_value = str(frames_dir) if frames_dir else None
+    zmq_host = str(payload.get("zmq_host", "localhost"))
+    zmq_port = _resolve_int(payload, "zmq_port", 5555) or 5555
+    capture_source = _resolve_capture_source(payload, frames_dir_value)
+    capture_mode = str(payload.get("capture_mode", "video")).strip().lower()
+    camera_index = _resolve_int(payload, "camera_index", DEFAULT_CAMERA_INDEX) or DEFAULT_CAMERA_INDEX
+    camera_width = _resolve_int(payload, "camera_width")
+    camera_height = _resolve_int(payload, "camera_height")
+    camera_fps = _resolve_float(payload, "camera_fps", DEFAULT_CAMERA_FPS)
+    warmup_seconds = _resolve_float(payload, "camera_warmup_seconds", DEFAULT_CAMERA_WARMUP_SECONDS)
+    replay_interval_seconds = _resolve_float(payload, "replay_interval_seconds", 0.1)
 
-    if frames_dir is None:
-        log("  [WARN] frames_dir not in payload — skipping ZMQ send")
+    try:
+        if command["command_type"] == "capture_photo" or capture_mode == "image":
+            if capture_source == "replay":
+                sent_frames = replay_frames_to_zmq(
+                    frames_dir=frames_dir_value or "",
+                    host=zmq_host,
+                    port=zmq_port,
+                    session_id=session_key,
+                    device_id=device_id,
+                    frame_interval_seconds=replay_interval_seconds,
+                    max_frames=1,
+                    logger=lambda message: log(f"capture_photo replay: {message}"),
+                )
+            else:
+                sent_frames = capture_photo_to_zmq(
+                    host=zmq_host,
+                    port=zmq_port,
+                    session_id=session_key,
+                    device_id=device_id,
+                    camera_index=camera_index,
+                    width=camera_width,
+                    height=camera_height,
+                    warmup_seconds=warmup_seconds,
+                    logger=lambda message: log(f"capture_photo camera: {message}"),
+                )
+        else:
+            duration_seconds = _resolve_capture_duration_seconds(payload)
+            if capture_source == "replay":
+                sent_frames = replay_frames_to_zmq(
+                    frames_dir=frames_dir_value or "",
+                    host=zmq_host,
+                    port=zmq_port,
+                    session_id=session_key,
+                    device_id=device_id,
+                    frame_interval_seconds=replay_interval_seconds,
+                    stop_event=stop_event,
+                    logger=lambda message: log(f"start_recording replay: {message}"),
+                )
+            else:
+                sent_frames = capture_video_to_zmq(
+                    host=zmq_host,
+                    port=zmq_port,
+                    session_id=session_key,
+                    duration_seconds=duration_seconds,
+                    device_id=device_id,
+                    camera_index=camera_index,
+                    width=camera_width,
+                    height=camera_height,
+                    fps=camera_fps,
+                    warmup_seconds=warmup_seconds,
+                    stop_event=stop_event,
+                    logger=lambda message: log(f"start_recording camera: {message}"),
+                )
+
+        log(f"Capture command {command_id} finished with {sent_frames} frame(s) sent.")
+        update_command_status(backend, device_id, command_id, "completed")
+    except Exception as exc:
+        log(f"[ERROR] Capture command {command_id} failed: {exc}")
+        try:
+            update_command_status(backend, device_id, command_id, "failed")
+        except Exception as update_exc:
+            log(f"[ERROR] Failed to update command {command_id} to failed: {update_exc}")
+    finally:
+        _clear_active_capture(command_id)
+
+
+def _start_capture_command(command: dict[str, Any], backend: str, device_id: int) -> None:
+    command_id = int(command["command_id"])
+    payload = _load_command_payload(command)
+    session_key = _resolve_session_key(command, payload)
+    stop_event = threading.Event()
+    capture_thread = threading.Thread(
+        target=_run_capture_job,
+        args=(command, backend, device_id, stop_event),
+        daemon=True,
+    )
+    active_capture = ActiveCapture(
+        command_id=command_id,
+        session_key=session_key,
+        command_type=str(command["command_type"]),
+        thread=capture_thread,
+        stop_event=stop_event,
+    )
+
+    if not _register_active_capture(active_capture):
+        log(f"[WARN] Another capture is already active. Rejecting command {command_id}.")
         update_command_status(backend, device_id, command_id, "failed")
         return
 
-    # Gọi pi_zmq_sender.py nếu tồn tại, hoặc implement trực tiếp bên dưới
-    sender_script = os.path.join(os.path.dirname(__file__), "pi_zmq_sender.py")
-
-    if os.path.exists(sender_script):
-        cmd = [
-            sys.executable, sender_script,
-            "--frames-dir", frames_dir,
-            "--host", zmq_host,
-            "--port", str(zmq_port),
-            "--session-id", session_key,
-        ]
-        log(f"  Running: {' '.join(cmd)}")
-        result = subprocess.run(cmd, timeout=120)
-        if result.returncode == 0:
-            update_command_status(backend, device_id, command_id, "completed")
-        else:
-            log(f"  [ERROR] pi_zmq_sender exited with code {result.returncode}")
-            update_command_status(backend, device_id, command_id, "failed")
-    else:
-        # Fallback: gửi thẳng qua ZMQ nếu có thư viện
-        log(f"  pi_zmq_sender.py not found, attempting inline ZMQ send...")
-        try:
-            _inline_zmq_send(frames_dir, zmq_host, zmq_port, session_key)
-            update_command_status(backend, device_id, command_id, "completed")
-        except Exception as exc:
-            log(f"  [ERROR] Inline ZMQ send failed: {exc}")
-            update_command_status(backend, device_id, command_id, "failed")
+    update_command_status(backend, device_id, command_id, "running")
+    capture_thread.start()
+    log(f"Capture command {command_id} started in background for session {session_key}.")
 
 
-def _inline_zmq_send(frames_dir: str, host: str, port: int, session_id: str) -> None:
-    import zmq
-    from pathlib import Path
+def _handle_stop_recording(command: dict[str, Any], backend: str, device_id: int) -> None:
+    command_id = int(command["command_id"])
+    active_capture = _get_active_capture()
 
-    frames_path = Path(frames_dir)
-    frame_files = sorted(frames_path.glob("*.jpg")) + sorted(frames_path.glob("*.png"))
-    if not frame_files:
-        raise FileNotFoundError(f"No image files found in {frames_dir}")
+    if active_capture is None or active_capture.command_type != "start_recording":
+        log("stop_recording received, but no active recording is running.")
+        update_command_status(backend, device_id, command_id, "failed")
+        return
 
-    ctx = zmq.Context()
-    sock = ctx.socket(zmq.PUSH)
-    sock.connect(f"tcp://{host}:{port}")
+    update_command_status(backend, device_id, command_id, "running")
+    active_capture.stop_event.set()
+    active_capture.thread.join(timeout=15)
 
-    for idx, frame_file in enumerate(frame_files, start=1):
-        with frame_file.open("rb") as f:
-            frame_bytes = f.read()
-        meta = json.dumps({
-            "session_id": session_id,
-            "frame_index": idx,
-            "total_frames": len(frame_files),
-            "filename": frame_file.name,
-        }).encode()
-        sock.send_multipart([meta, frame_bytes])
-        log(f"  Sent frame {idx}/{len(frame_files)}: {frame_file.name}")
+    if active_capture.thread.is_alive():
+        log(f"[ERROR] stop_recording timed out for active command {active_capture.command_id}.")
+        update_command_status(backend, device_id, command_id, "failed")
+        return
 
-    sock.close()
-    ctx.term()
-    log(f"  ZMQ send complete ({len(frame_files)} frames)")
+    update_command_status(backend, device_id, command_id, "completed")
+    log(f"stop_recording completed for active command {active_capture.command_id}.")
 
 
-def handle_command(command: dict, backend: str, device_id: int) -> None:
-    command_id: int = command["command_id"]
-    command_type: str = command["command_type"]
-
-    log(f"Got command: type={command_type}, id={command_id}")
+def handle_command(command: dict[str, Any], backend: str, device_id: int) -> None:
+    command_id = int(command["command_id"])
+    command_type = str(command["command_type"])
+    log(f"Received command {command_id} ({command_type})")
 
     if command_type == "start_recording":
-        handle_start_recording(command, backend, device_id)
-    elif command_type == "stop_recording":
-        update_command_status(backend, device_id, command_id, "running")
-        log("  stop_recording: no action needed in this version")
-        update_command_status(backend, device_id, command_id, "completed")
-    elif command_type == "capture_photo":
-        update_command_status(backend, device_id, command_id, "running")
-        log("  capture_photo: not implemented yet")
-        update_command_status(backend, device_id, command_id, "failed")
-    else:
-        update_command_status(backend, device_id, command_id, "running")
-        log(f"  [WARN] Unknown command type: {command_type}")
-        update_command_status(backend, device_id, command_id, "failed")
+        _start_capture_command(command, backend, device_id)
+        return
 
+    if command_type == "capture_photo":
+        _start_capture_command(command, backend, device_id)
+        return
 
-# ── Main loop ─────────────────────────────────────────────────────────────────
+    if command_type == "stop_recording":
+        _handle_stop_recording(command, backend, device_id)
+        return
+
+    log(f"[WARN] Unknown command type: {command_type}")
+    update_command_status(backend, device_id, command_id, "failed")
+
 
 def run(backend: str, device_id: int) -> None:
-    log(f"Agent started — backend={backend}, device_id={device_id}")
+    log(f"Agent started with backend={backend}, device_id={device_id}")
     log("Press Ctrl+C to stop.")
 
     while True:
@@ -223,11 +362,10 @@ def run(backend: str, device_id: int) -> None:
             command = fetch_pending_command(backend, device_id)
             if command:
                 handle_command(command, backend, device_id)
-
         except requests.exceptions.ConnectionError:
-            log("[WARN] Cannot connect to backend — will retry next cycle")
+            log("[WARN] Cannot connect to backend. Will retry next cycle.")
         except requests.exceptions.Timeout:
-            log("[WARN] Request timed out — will retry next cycle")
+            log("[WARN] Request timed out. Will retry next cycle.")
         except requests.exceptions.HTTPError as exc:
             log(f"[WARN] HTTP error: {exc}")
         except Exception as exc:
@@ -235,8 +373,6 @@ def run(backend: str, device_id: int) -> None:
 
         time.sleep(POLL_INTERVAL)
 
-
-# ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="PoseTrack Pi Agent")

@@ -32,11 +32,18 @@ pending -> acknowledged -> running -> completed | failed
 
 - Added `executed_at` handling for command progress tracking.
 - Added `GET /api/devices/{device_id}/commands/{command_id}` for mobile polling.
+- Pi agent now supports:
+  - replay-to-ZMQ capture
+  - live camera photo capture
+  - live camera video streaming
+  - background capture jobs so `stop_recording` can stop an active run
 
 ### Mobile App
 
 - `Connect` no longer depends on fake connection state.
 - `Capture` no longer creates only mock drafts for the MVP path.
+- `Capture` image mode now sends `capture_photo` instead of forcing everything through `start_recording`.
+- `Capture` video mode now sends `start_recording` when recording begins and `stop_recording` when the user stops, then moves to `Processing`.
 - `Processing` no longer finishes by mock finalize when backend ids are available.
 - Result screens now share one backend result source of truth through `ResultApi`.
 - `History` now opens the exact backend session via `session_key` instead of jumping to the generic results list.
@@ -85,9 +92,9 @@ The action items from the previous snapshot are now completed:
 
 1. surface `history/{history_id}.result` in a dedicated mobile detail screen if needed
 2. replace or retire the remaining stub `/jobs` pipeline now that `history` no longer depends on it
-3. add Pi live-camera capture mode beyond folder replay
 
 ## Verification Done
 
 - `python -m compileall backend/app`
+- `python -m compileall backend/pi_agent`
 - `dart analyze` was attempted for the modified Flutter files, but it timed out in this environment and still needs a clean rerun locally.

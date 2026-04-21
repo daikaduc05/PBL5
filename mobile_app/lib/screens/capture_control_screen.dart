@@ -39,6 +39,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
   Duration _elapsed = Duration.zero;
   int? _captureDeviceId;
   String? _captureDeviceName;
+  CaptureSessionDraft? _activeRecordingDraft;
   Timer? _timer;
 
   @override
@@ -145,24 +146,11 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
     );
   }
 
-  void _startRecording() {
-    if (_isLoading || _isSubmittingCapture || _isRecording || _selectedMode != CaptureMode.video) {
-      return;
-    }
-
-    if (!_pipelineReady) {
-      _showPipelineRequiredMessage();
-      return;
-    }
-
-    setState(() {
-      _isRecording = true;
-      _elapsed = Duration.zero;
-    });
-
+  void _startRecordingTimer([Duration initialElapsed = Duration.zero]) {
     _timer?.cancel();
+    final baseSeconds = initialElapsed.inSeconds;
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      final nextElapsed = Duration(seconds: timer.tick);
+      final nextElapsed = Duration(seconds: baseSeconds + timer.tick);
 
       if (!mounted) {
         timer.cancel();
@@ -183,8 +171,76 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
     });
   }
 
+  Future<void> _startRecording() async {
+    if (_isLoading || _isSubmittingCapture || _isRecording || _selectedMode != CaptureMode.video) {
+      return;
+    }
+
+    if (!_pipelineReady) {
+      _showPipelineRequiredMessage();
+      return;
+    }
+
+    setState(() {
+      _isSubmittingCapture = true;
+    });
+
+    try {
+      final draft = await _createBackendCaptureDraft(
+        mode: CaptureMode.video,
+        targetDurationSeconds: _selectedDurationSeconds,
+        actualDurationSeconds: 0,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _activeRecordingDraft = draft;
+        _isRecording = true;
+        _elapsed = Duration.zero;
+      });
+      _startRecordingTimer();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Recording started. The Raspberry Pi is now running the capture command.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(extractApiError(error))),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmittingCapture = false;
+        });
+      }
+    }
+  }
+
   Future<void> _stopRecording({bool autoTriggered = false}) async {
     if (!_isRecording || _isSubmittingCapture) {
+      return;
+    }
+
+    final activeDraft = _activeRecordingDraft;
+    if (activeDraft == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'The active recording session was lost. Start a new recording and try again.',
+          ),
+        ),
+      );
       return;
     }
 
@@ -195,17 +251,64 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
         : _elapsed.inSeconds;
 
     setState(() {
-      _isRecording = false;
+      _isSubmittingCapture = true;
+      _elapsed = Duration(seconds: actualDurationSeconds);
     });
 
-    await _submitCaptureCommand(
-      mode: CaptureMode.video,
-      targetDurationSeconds: _selectedDurationSeconds,
-      actualDurationSeconds: actualDurationSeconds,
-      successMessage: autoTriggered
-          ? null
-          : 'Recording saved. Capture command sent to the Raspberry Pi.',
-    );
+    try {
+      await _sendStopRecordingCommand(
+        draft: activeDraft,
+        actualDurationSeconds: actualDurationSeconds,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      final finalizedDraft = _completeRecordingDraft(
+        draft: activeDraft,
+        actualDurationSeconds: actualDurationSeconds,
+      );
+
+      setState(() {
+        _isRecording = false;
+        _activeRecordingDraft = null;
+      });
+
+      if (!autoTriggered) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Recording stopped. Waiting for the Raspberry Pi capture run to finish packaging results.',
+            ),
+          ),
+        );
+      }
+
+      Navigator.of(context).pushNamed(
+        AppRoutes.processing,
+        arguments: finalizedDraft,
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isRecording = true;
+      });
+      _startRecordingTimer(_elapsed);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(extractApiError(error))),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmittingCapture = false;
+        });
+      }
+    }
   }
 
   Future<void> _captureImage() async {
@@ -274,6 +377,50 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
     }
   }
 
+  Future<void> _sendStopRecordingCommand({
+    required CaptureSessionDraft draft,
+    required int actualDurationSeconds,
+  }) async {
+    final backendSessionId = draft.backendSessionId;
+    final deviceId = draft.deviceId;
+    if (backendSessionId == null || deviceId == null) {
+      throw const ApiException(
+        'The active recording session is missing backend identifiers.',
+      );
+    }
+
+    await _api.createDeviceCommand(
+      deviceId: deviceId,
+      sessionId: backendSessionId,
+      commandType: 'stop_recording',
+      commandPayload: {
+        'capture_mode': 'video',
+        'target_duration_seconds': draft.targetDurationSeconds,
+        'actual_duration_seconds': actualDurationSeconds,
+        'source': 'mobile_app',
+      },
+    );
+  }
+
+  CaptureSessionDraft _completeRecordingDraft({
+    required CaptureSessionDraft draft,
+    required int actualDurationSeconds,
+  }) {
+    return CaptureSessionDraft(
+      sessionId: draft.sessionId,
+      backendSessionId: draft.backendSessionId,
+      deviceId: draft.deviceId,
+      commandId: draft.commandId,
+      mode: draft.mode,
+      targetDurationSeconds: draft.targetDurationSeconds,
+      actualDurationSeconds: actualDurationSeconds,
+      capturedAt: draft.capturedAt,
+      autoUpload: draft.autoUpload,
+      raspberryPiIp: draft.raspberryPiIp,
+      serverAddress: draft.serverAddress,
+    );
+  }
+
   Future<CaptureSessionDraft> _createBackendCaptureDraft({
     required CaptureMode mode,
     required int targetDurationSeconds,
@@ -288,14 +435,18 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
     }
 
     final session = await _api.createSession();
+    final commandType = mode == CaptureMode.image
+        ? 'capture_photo'
+        : 'start_recording';
     final command = await _api.createDeviceCommand(
       deviceId: captureDevice.id,
       sessionId: session.sessionId,
-      commandType: 'start_recording',
+      commandType: commandType,
       commandPayload: {
         'frames_dir': BackendConfig.defaultPiFramesDir,
         'zmq_host': _resolveZmqHost(settings.serverAddress),
         'zmq_port': BackendConfig.defaultZmqPort,
+        'capture_source': 'auto',
         'capture_mode': mode.name,
         'target_duration_seconds': targetDurationSeconds,
         'actual_duration_seconds': actualDurationSeconds,
@@ -576,7 +727,9 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
                 child: AppButton(
                   text: 'Start Recording',
                   onPressed: _selectedMode == CaptureMode.video && !_isRecording
-                      ? _startRecording
+                      ? () {
+                          _startRecording();
+                        }
                       : () => _showModeHint(
                           'Switch to video mode to start a recording session.',
                         ),

@@ -187,6 +187,7 @@ Create a command for the Pi agent.
     "frames_dir": "/home/pi/posetrack/frames",
     "zmq_host": "192.168.1.10",
     "zmq_port": 5555,
+    "capture_source": "auto",
     "capture_mode": "video",
     "target_duration_seconds": 10,
     "actual_duration_seconds": 10,
@@ -275,6 +276,17 @@ Update command state from the Pi agent.
   "status": "completed"
 }
 ```
+
+### Capture source behavior
+
+The Pi agent now resolves capture source like this:
+
+- `capture_source = "replay"`: force replay from `frames_dir`
+- `capture_source = "camera"`: force live camera capture
+- `capture_source = "auto"`: use replay if `frames_dir` exists and contains
+  frames, otherwise use the live camera
+
+`capture_photo` and `start_recording` both follow this rule.
 
 **Response**
 
