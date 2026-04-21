@@ -3,7 +3,7 @@
   "frame_id": "4",
   "device_id": "raspi_01",
   "filename": "frame_0003.jpg",
-  "timestamp": 1776422739.7573848,
+  "timestamp": 1776783868.1113567,
   "message_type": "pi_frame_stream_fps_test",
   "input_path": "D:\\TaiLieuNam3_DUT\\HKII\\PBL5\\PBL5\\backend\\workers\\output\\sess_video_20260401_230653\\frame_4.jpg",
   "pose_output_path": "D:\\TaiLieuNam3_DUT\\HKII\\PBL5\\PBL5\\backend\\workers\\results\\sess_video_20260401_230653\\frame_4_pose.jpg",

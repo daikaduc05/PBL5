@@ -202,7 +202,7 @@ Open four terminals.
 From `backend`:
 
 ```powershell
-..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
+    .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
 ```
 
 If your virtual environment lives somewhere else, keep the same `uvicorn`
