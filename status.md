@@ -40,6 +40,8 @@ pending -> acknowledged -> running -> completed | failed
 
 ### Mobile App
 
+- `Home` now reads live endpoint status and backend history instead of showing a fixed demo dashboard.
+- `Connect` now describes truthful refresh/status-check behavior instead of fake pairing semantics.
 - `Connect` no longer depends on fake connection state.
 - `Capture` no longer creates only mock drafts for the MVP path.
 - `Capture` image mode now sends `capture_photo` instead of forcing everything through `start_recording`.
@@ -47,6 +49,7 @@ pending -> acknowledged -> running -> completed | failed
 - `Processing` no longer finishes by mock finalize when backend ids are available.
 - Result screens now share one backend result source of truth through `ResultApi`.
 - `History` now opens the exact backend session via `session_key` instead of jumping to the generic results list.
+- `Settings` now persist the configured server, Raspberry Pi, and capture defaults locally across app restarts.
 - Removed the old `BackendResultsService` compatibility shim after cleaning imports.
 - Fixed backend result contract mismatch:
 
@@ -88,13 +91,14 @@ The action items from the previous snapshot are now completed:
 2. backend history now follows the canonical `session + command + results` flow
 3. old compatibility shim removed
 4. legacy `/jobs` create path retired so it no longer creates fake processing runs
+5. `Home`, `Connect`, and `Settings` now reflect the real runtime model more closely
 
 ## Optional Next Improvements
 
 1. surface `history/{history_id}.result` in a dedicated mobile detail screen if needed
-2. make `Home` reflect real runtime and recent capture data
-3. relabel or redesign `Connect` actions so they match real refresh/status behavior
-4. persist `Settings` across app restarts instead of keeping them in-memory
+2. audit the remaining `MockPoseTrackingService` finalize/result fallback on the default app path
+3. run the first full end-to-end verification on backend + Pi + worker + mobile app
+4. rewrite or retire stale docs such as `OVERVIEW.md`
 
 ## Verification Done
 

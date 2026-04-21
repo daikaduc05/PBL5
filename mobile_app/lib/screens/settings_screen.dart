@@ -649,7 +649,7 @@ class _LoadedSettingsView extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Saved changes apply to future capture sessions and can be swapped to persistent storage later without changing this UI.',
+                  'Saved changes apply to future capture sessions and are now stored locally so they survive app restarts.',
                   style: AppTypography.bodyMedium.copyWith(
                     color: AppColors.textPrimary.withValues(alpha: 0.88),
                     fontSize: 13.5,

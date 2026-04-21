@@ -31,6 +31,9 @@ The project already has a real technical core:
   the old stub-only `/jobs` path.
 - The legacy `/jobs` create path is retired, and the remaining status endpoint
   is compatibility-only over canonical command history.
+- `Home` now surfaces live endpoint status and recent history data.
+- `Connect` now uses truthful refresh/status semantics.
+- `Settings` now persist configuration locally across app restarts.
 
 The current real orchestration path is:
 
@@ -53,10 +56,12 @@ Mobile App
 The project is not complete because the system still has important gaps between
 "real MVP demo" and "finished project":
 
-- `Connect` reads real backend data, but its actions still behave like refresh
-  actions rather than true network pairing or scanning.
-- `Home` is still mostly static demo content.
-- `Settings` still use in-memory mock settings rather than persistent storage.
+- The default app path still carries legacy mock fallback logic in places such
+  as `processing_status_screen.dart` when backend ids are missing.
+- Replay mode still coexists with real camera capture and needs hardware-level
+  validation before it can be treated as a secondary fallback only.
+- Some stale documents still describe the older demo architecture instead of
+  the current canonical flow.
 - Test coverage is very thin. There is no real end-to-end test proving the full
   phone -> backend -> Pi -> worker -> result loop on actual hardware.
 
@@ -240,9 +245,9 @@ Definition of done:
 
 If work resumes from this snapshot, start here:
 
-1. Phase 3: make `Home`, `Connect`, and `Settings` fully truthful.
-2. Phase 4: remove or isolate the remaining mock/demo fallback paths.
-3. Phase 5: run and document the first full end-to-end verification.
+1. Phase 4: remove or isolate the remaining mock/demo fallback paths.
+2. Phase 5: run and document the first full end-to-end verification.
+3. Clean up or rewrite stale docs that still describe the older demo architecture.
 
 Do not start with UI polish. The biggest blockers are now truthful app state,
 persisted configuration, and real-stack verification.
@@ -255,9 +260,9 @@ persisted configuration, and real-stack verification.
 - [x] Pi supports real image capture.
 - [x] Pi supports real video capture.
 - [ ] Replay mode is optional fallback only.
-- [ ] `Home` shows live data.
-- [ ] `Connect` actions match their real behavior.
-- [ ] `Settings` persist configuration.
+- [x] `Home` shows live data.
+- [x] `Connect` actions match their real behavior.
+- [x] `Settings` persist configuration.
 - [ ] Default app flow no longer relies on legacy mock finalize behavior.
 - [ ] Backend and mobile docs match the code.
 - [ ] End-to-end test has been completed on real hardware.

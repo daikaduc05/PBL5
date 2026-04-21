@@ -1,21 +1,31 @@
 import 'package:flutter/material.dart';
+
 import '../components/action_shortcut_card.dart';
+import '../components/app_button.dart';
 import '../components/metric_pill.dart';
 import '../components/screen_container.dart';
 import '../components/section_title.dart';
 import '../components/session_summary_card.dart';
 import '../components/status_card.dart';
 import '../navigation/app_routes.dart';
+import '../services/api_service.dart';
+import '../services/mock_device_connection_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_typography.dart';
+import '../utils/app_formatters.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
   static const List<_DashboardAction> _actions = [
     _DashboardAction(
       title: 'Connect Device',
-      subtitle: 'Pair Raspberry Pi and server',
+      subtitle: 'Refresh backend and Pi status',
       icon: Icons.usb_rounded,
       route: AppRoutes.deviceConnection,
       isPrimary: true,
@@ -35,7 +45,7 @@ class HomeScreen extends StatelessWidget {
     ),
     _DashboardAction(
       title: 'History',
-      subtitle: 'Open the archived results browser',
+      subtitle: 'Review canonical capture runs',
       icon: Icons.history_rounded,
       route: AppRoutes.history,
     ),
@@ -47,6 +57,68 @@ class HomeScreen extends StatelessWidget {
       isWide: true,
     ),
   ];
+
+  final ApiService _api = ApiService();
+  final DeviceConnectionService _connectionService = DeviceConnectionService();
+
+  _DashboardSnapshot? _snapshot;
+  bool _isLoading = true;
+  String? _loadErrorMessage;
+  String? _historyWarningMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDashboard();
+  }
+
+  Future<void> _loadDashboard() async {
+    setState(() {
+      _isLoading = true;
+      _loadErrorMessage = null;
+      _historyWarningMessage = null;
+    });
+
+    try {
+      final devices = await _connectionService.getDevices();
+      List<HistoryItem> history = const [];
+      String? historyWarningMessage;
+
+      try {
+        history = await _api.getHistory();
+      } catch (error) {
+        historyWarningMessage = extractApiError(error);
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _snapshot = _DashboardSnapshot(
+          devices: devices,
+          history: history,
+          loadedAt: DateTime.now(),
+        );
+        _historyWarningMessage = historyWarningMessage;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _snapshot = null;
+        _loadErrorMessage = extractApiError(error);
+        _isLoading = false;
+      });
+    }
+  }
+
+  void _openRoute(String route) {
+    Navigator.of(context).pushNamed(route);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -87,101 +159,88 @@ class HomeScreen extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const _DashboardHeader(),
+                            _DashboardHeader(
+                              snapshot: _snapshot,
+                              isLoading: _isLoading,
+                              loadErrorMessage: _loadErrorMessage,
+                              historyWarningMessage: _historyWarningMessage,
+                            ),
                             const SizedBox(height: 24),
                             const SectionTitle(
                               title: 'System Overview',
                               subtitle:
-                                  'Futuristic mobile control center for the AI pose pipeline.',
+                                  'Live runtime status for the AI pose pipeline before the next capture.',
                             ),
                             const SizedBox(height: 16),
-                            const _OverviewCard(),
+                            if (_isLoading && _snapshot == null)
+                              const _LoadingCard(
+                                title: 'Loading dashboard',
+                                message:
+                                    'Refreshing backend health, device status, and recent run history.',
+                              )
+                            else if (_loadErrorMessage != null)
+                              _MessageCard(
+                                title: 'Dashboard unavailable',
+                                message: _loadErrorMessage!,
+                                accent: AppColors.warning,
+                              )
+                            else if (_snapshot != null)
+                              _OverviewCard(
+                                snapshot: _snapshot!,
+                                historyWarningMessage: _historyWarningMessage,
+                                onRefresh: _loadDashboard,
+                                isRefreshing: _isLoading,
+                              ),
                             const SizedBox(height: 24),
                             const SectionTitle(
                               title: 'Live Services',
                               subtitle:
-                                  'Edge device and server health before the next capture.',
+                                  'Resolved backend and Raspberry Pi status using the current configured addresses.',
                             ),
                             const SizedBox(height: 16),
-                            const StatusCard(
-                              title: 'Raspberry Pi 4',
-                              subtitle:
-                                  'Edge capture node is synced and streaming telemetry cleanly.',
-                              icon: Icons.memory_rounded,
-                              isConnected: true,
-                              statusLabel: 'Linked',
-                              highlights: [
-                                StatusHighlight(
-                                  label: 'IP Address',
-                                  value: '192.168.1.24',
+                            if (_snapshot == null)
+                              const _MessageCard(
+                                title: 'No live service data',
+                                message:
+                                    'Dashboard data is still unavailable. Refresh after the backend becomes reachable.',
+                              )
+                            else ...[
+                              _ServiceStatusCard(
+                                node: _snapshot!.nodeFor(
+                                  DeviceEndpoint.raspberryPi,
                                 ),
-                                StatusHighlight(
-                                  label: 'Stream Rate',
-                                  value: '42 FPS',
+                                fallbackTitle: 'Raspberry Pi',
+                                fallbackSubtitle: 'Edge Capture Node',
+                                fallbackFooter:
+                                    'The app has not resolved Raspberry Pi status yet.',
+                              ),
+                              const SizedBox(height: 12),
+                              _ServiceStatusCard(
+                                node: _snapshot!.nodeFor(
+                                  DeviceEndpoint.processingServer,
                                 ),
-                                StatusHighlight(
-                                  label: 'Temperature',
-                                  value: '47 C',
-                                ),
-                                StatusHighlight(
-                                  label: 'Uptime',
-                                  value: '08h 42m',
-                                ),
-                              ],
-                              footer:
-                                  'Heartbeat received 8 seconds ago with stable Wi-Fi and camera sync.',
-                            ),
-                            const SizedBox(height: 12),
-                            const StatusCard(
-                              title: 'Processing Server',
-                              subtitle:
-                                  'Inference backend is healthy and ready to analyze new sessions.',
-                              icon: Icons.cloud_done_rounded,
-                              isConnected: true,
-                              statusLabel: 'Online',
-                              highlights: [
-                                StatusHighlight(
-                                  label: 'API',
-                                  value: 'FastAPI v1',
-                                ),
-                                StatusHighlight(
-                                  label: 'Latency',
-                                  value: '41 ms',
-                                ),
-                                StatusHighlight(
-                                  label: 'Queue',
-                                  value: '0 Jobs',
-                                ),
-                                StatusHighlight(
-                                  label: 'Model',
-                                  value: 'YOLOv8 Pose',
-                                ),
-                              ],
-                              footer:
-                                  'Pose engine loaded, queue is clear, and result serialization is available.',
-                            ),
+                                fallbackTitle: 'Processing Server',
+                                fallbackSubtitle: 'Pose Processing Backend',
+                                fallbackFooter:
+                                    'The app has not resolved backend status yet.',
+                              ),
+                            ],
                             const SizedBox(height: 24),
                             const SectionTitle(
-                              title: 'Recent Session',
+                              title: 'Recent Run',
                               subtitle:
-                                  'Quick summary of the latest processed capture.',
+                                  'Most recent canonical capture run recorded by the backend history API.',
                             ),
                             const SizedBox(height: 16),
-                            const SessionSummaryCard(
-                              sessionId: 'PT-240414-08',
-                              title: 'Standing Pose Calibration',
-                              summary:
-                                  'Pose detected successfully. Skeleton landmarks and confidence metrics are ready for review.',
-                              confidence: '98.4%',
-                              keypoints: '17/17',
-                              duration: '12 s',
-                              timestamp: 'Apr 14, 2026 - 14:26',
+                            _LatestRunCard(
+                              run: _snapshot?.latestRun,
+                              historyWarningMessage: _historyWarningMessage,
                             ),
                             const SizedBox(height: 24),
                             const SectionTitle(
                               title: 'Quick Actions',
                               subtitle:
-                                  'Primary mobile actions for the engineering project demo.',
+                                  'Primary actions for the current backend-driven PoseTrack flow.',
                             ),
                             const SizedBox(height: 16),
                             LayoutBuilder(
@@ -206,11 +265,7 @@ class HomeScreen extends StatelessWidget {
                                             subtitle: action.subtitle,
                                             icon: action.icon,
                                             isPrimary: action.isPrimary,
-                                            onTap: () {
-                                              Navigator.of(
-                                                context,
-                                              ).pushNamed(action.route);
-                                            },
+                                            onTap: () => _openRoute(action.route),
                                           ),
                                         ),
                                       )
@@ -234,10 +289,32 @@ class HomeScreen extends StatelessWidget {
 }
 
 class _DashboardHeader extends StatelessWidget {
-  const _DashboardHeader();
+  final _DashboardSnapshot? snapshot;
+  final bool isLoading;
+  final String? loadErrorMessage;
+  final String? historyWarningMessage;
+
+  const _DashboardHeader({
+    required this.snapshot,
+    required this.isLoading,
+    required this.loadErrorMessage,
+    required this.historyWarningMessage,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final readyCount = snapshot?.connectedCount ?? 0;
+    final totalCount = snapshot?.totalCount ?? 2;
+    final chipTwoLabel = historyWarningMessage == null
+        ? '${snapshot?.history.length ?? 0} runs tracked'
+        : 'history limited';
+    final bannerText = _buildBannerText();
+    final bannerAccent = loadErrorMessage != null
+        ? AppColors.warning
+        : (snapshot?.allConnected ?? false)
+        ? AppColors.success
+        : AppColors.primary;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -257,7 +334,7 @@ class _DashboardHeader extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Human pose estimation dashboard for Raspberry Pi, server processing, and AI capture control.',
+                    'Human pose estimation dashboard for Raspberry Pi capture, backend processing, and result review.',
                     style: AppTypography.bodyMedium.copyWith(
                       fontSize: 14,
                       height: 1.25,
@@ -267,14 +344,14 @@ class _DashboardHeader extends StatelessWidget {
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
-                    children: const [
+                    children: [
                       _HeaderChip(
                         icon: Icons.sensors_rounded,
-                        label: '2 systems synced',
+                        label: '$readyCount/$totalCount endpoints ready',
                       ),
                       _HeaderChip(
                         icon: Icons.auto_graph_rounded,
-                        label: 'demo mode ready',
+                        label: chipTwoLabel,
                       ),
                     ],
                   ),
@@ -310,19 +387,23 @@ class _DashboardHeader extends StatelessWidget {
           decoration: BoxDecoration(
             color: AppColors.surface.withValues(alpha: 0.72),
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: AppColors.border.withValues(alpha: 0.68)),
+            border: Border.all(color: bannerAccent.withValues(alpha: 0.28)),
           ),
           child: Row(
             children: [
               Icon(
-                Icons.bolt_rounded,
+                loadErrorMessage != null
+                    ? Icons.error_outline_rounded
+                    : isLoading
+                    ? Icons.sync_rounded
+                    : Icons.bolt_rounded,
                 size: 18,
-                color: AppColors.primary.withValues(alpha: 0.95),
+                color: bannerAccent,
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'System ready for capture and inference.',
+                  bannerText,
                   style: AppTypography.bodyMedium.copyWith(
                     color: AppColors.textPrimary.withValues(alpha: 0.88),
                     fontSize: 14,
@@ -335,16 +416,16 @@ class _DashboardHeader extends StatelessWidget {
                   vertical: 6,
                 ),
                 decoration: BoxDecoration(
-                  color: AppColors.success.withValues(alpha: 0.14),
+                  color: bannerAccent.withValues(alpha: 0.14),
                   borderRadius: BorderRadius.circular(999),
                   border: Border.all(
-                    color: AppColors.success.withValues(alpha: 0.34),
+                    color: bannerAccent.withValues(alpha: 0.34),
                   ),
                 ),
                 child: Text(
-                  'READY',
+                  _buildBannerBadge(),
                   style: AppTypography.bodyMedium.copyWith(
-                    color: AppColors.success,
+                    color: bannerAccent,
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0.9,
@@ -357,13 +438,62 @@ class _DashboardHeader extends StatelessWidget {
       ],
     );
   }
+
+  String _buildBannerText() {
+    if (loadErrorMessage != null) {
+      return 'Dashboard data is unavailable right now. Check the configured server address and refresh again.';
+    }
+
+    if (isLoading && snapshot == null) {
+      return 'Refreshing live backend status, Raspberry Pi heartbeat, and recent run history.';
+    }
+
+    if (snapshot == null) {
+      return 'Dashboard data has not loaded yet.';
+    }
+
+    if (snapshot!.allConnected) {
+      return 'Backend and Raspberry Pi are both ready for the next capture run.';
+    }
+
+    if (snapshot!.connectedCount == 0) {
+      return 'Neither endpoint is currently ready. Use Connect to inspect the backend and Pi status.';
+    }
+
+    return '${snapshot!.connectedCount} of ${snapshot!.totalCount} endpoints are ready. Refresh the remaining service before capture.';
+  }
+
+  String _buildBannerBadge() {
+    if (loadErrorMessage != null) {
+      return 'CHECK';
+    }
+    if (isLoading && snapshot == null) {
+      return 'LOADING';
+    }
+    if (snapshot?.allConnected ?? false) {
+      return 'READY';
+    }
+    return 'LIVE';
+  }
 }
 
 class _OverviewCard extends StatelessWidget {
-  const _OverviewCard();
+  final _DashboardSnapshot snapshot;
+  final String? historyWarningMessage;
+  final Future<void> Function() onRefresh;
+  final bool isRefreshing;
+
+  const _OverviewCard({
+    required this.snapshot,
+    required this.historyWarningMessage,
+    required this.onRefresh,
+    required this.isRefreshing,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final readinessPercent = (snapshot.readiness * 100).round();
+
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -408,7 +538,7 @@ class _OverviewCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        'All core services are aligned for a polished mobile capture demo with edge streaming and server-side pose estimation.',
+                        'This dashboard now reflects live backend-driven status instead of a fixed demo snapshot.',
                         style: AppTypography.bodyMedium.copyWith(
                           fontSize: 14,
                           height: 1.25,
@@ -442,7 +572,7 @@ class _OverviewCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '96%',
+                        '$readinessPercent%',
                         style: AppTypography.bodyLarge.copyWith(
                           color: AppColors.textPrimary,
                           fontWeight: FontWeight.w700,
@@ -461,27 +591,27 @@ class _OverviewCard extends StatelessWidget {
                 final tileWidth = useTwoColumns
                     ? (constraints.maxWidth - 12) / 2
                     : constraints.maxWidth;
-                const tiles = [
+                final tiles = [
                   MetricPill(
                     label: 'Devices Online',
-                    value: '02 / 02',
+                    value: '${snapshot.connectedCount}/${snapshot.totalCount}',
                     icon: Icons.router_rounded,
                     highlighted: true,
                   ),
                   MetricPill(
-                    label: 'Avg Latency',
-                    value: '41 ms',
-                    icon: Icons.speed_rounded,
+                    label: 'In Flight',
+                    value: '${snapshot.activeRuns}',
+                    icon: Icons.sync_rounded,
                   ),
                   MetricPill(
                     label: 'Captures Today',
-                    value: '08',
+                    value: '${snapshot.runsToday}',
                     icon: Icons.videocam_rounded,
                   ),
                   MetricPill(
-                    label: 'Model Status',
-                    value: 'Loaded',
-                    icon: Icons.psychology_alt_rounded,
+                    label: 'Failed Runs',
+                    value: '${snapshot.failedRuns}',
+                    icon: Icons.warning_amber_rounded,
                   ),
                 ];
 
@@ -506,7 +636,7 @@ class _OverviewCard extends StatelessWidget {
             ClipRRect(
               borderRadius: BorderRadius.circular(999),
               child: LinearProgressIndicator(
-                value: 0.96,
+                value: snapshot.readiness,
                 minHeight: 8,
                 backgroundColor: AppColors.background.withValues(alpha: 0.45),
                 valueColor: const AlwaysStoppedAnimation<Color>(
@@ -515,37 +645,273 @@ class _OverviewCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: AppColors.background.withValues(alpha: 0.28),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(
-                  color: AppColors.border.withValues(alpha: 0.65),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.sync_rounded,
-                    size: 18,
-                    color: AppColors.accentSoft,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Edge stream locked, result queue clear, and server heartbeat stable.',
-                      style: AppTypography.bodyMedium.copyWith(
-                        color: AppColors.textPrimary.withValues(alpha: 0.84),
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+            _MessageCard(
+              title: historyWarningMessage == null ? null : 'History warning',
+              message: historyWarningMessage ??
+                  'Last refresh completed at ${formatShortDateTime(snapshot.loadedAt)}. Use Connect for endpoint-level checks or History for detailed runs.',
+            ),
+            const SizedBox(height: 16),
+            AppButton(
+              text: 'Refresh Dashboard',
+              onPressed: () {
+                onRefresh();
+              },
+              isLoading: isRefreshing,
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ServiceStatusCard extends StatelessWidget {
+  final DeviceConnectionNode? node;
+  final String fallbackTitle;
+  final String fallbackSubtitle;
+  final String fallbackFooter;
+
+  const _ServiceStatusCard({
+    required this.node,
+    required this.fallbackTitle,
+    required this.fallbackSubtitle,
+    required this.fallbackFooter,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final resolvedNode = node;
+    if (resolvedNode == null) {
+      return StatusCard(
+        title: fallbackTitle,
+        subtitle: fallbackSubtitle,
+        icon: Icons.device_unknown_rounded,
+        isConnected: false,
+        statusLabel: 'Unknown',
+        highlights: const [
+          StatusHighlight(label: 'Address', value: 'Unavailable'),
+          StatusHighlight(label: 'Link', value: 'Unavailable'),
+          StatusHighlight(label: 'Status', value: 'Unknown'),
+          StatusHighlight(label: 'Last Seen', value: 'Unknown'),
+        ],
+        footer: fallbackFooter,
+      );
+    }
+
+    return StatusCard(
+      title: resolvedNode.name,
+      subtitle: resolvedNode.role,
+      icon: resolvedNode.endpoint == DeviceEndpoint.raspberryPi
+          ? Icons.memory_rounded
+          : Icons.cloud_done_rounded,
+      isConnected: resolvedNode.status == DeviceLinkStatus.connected,
+      statusLabel: switch (resolvedNode.status) {
+        DeviceLinkStatus.connected => 'Ready',
+        DeviceLinkStatus.disconnected => 'Offline',
+        DeviceLinkStatus.connecting => 'Refreshing',
+      },
+      highlights: [
+        StatusHighlight(label: 'Address', value: resolvedNode.ipAddress),
+        StatusHighlight(label: 'Link', value: resolvedNode.transport),
+        StatusHighlight(
+          label: resolvedNode.metricLabel,
+          value: resolvedNode.metricValue,
+        ),
+        StatusHighlight(label: 'Last Seen', value: resolvedNode.lastSeen),
+      ],
+      footer: resolvedNode.statusDetail,
+    );
+  }
+}
+
+class _LatestRunCard extends StatelessWidget {
+  final HistoryItem? run;
+  final String? historyWarningMessage;
+
+  const _LatestRunCard({
+    required this.run,
+    required this.historyWarningMessage,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final latestRun = run;
+    if (latestRun == null) {
+      return _MessageCard(
+        title: 'No backend runs yet',
+        message: historyWarningMessage ??
+            'The history API returned no capture runs yet. Start a capture from the app, then refresh the dashboard.',
+      );
+    }
+
+    return SessionSummaryCard(
+      sessionId: latestRun.sessionKey,
+      title: _runTitle(latestRun),
+      summary: _runSummary(latestRun),
+      confidenceLabel: 'Status',
+      confidence: _displayStatus(latestRun.status),
+      keypointsLabel: 'Command',
+      keypoints: _displayCommand(latestRun.commandType),
+      durationLabel: 'Progress',
+      duration: '${latestRun.progress}%',
+      timestamp: formatSessionTimestamp(latestRun.createdAt.toLocal()),
+      badgeLabel: 'LATEST RUN',
+    );
+  }
+
+  String _runTitle(HistoryItem item) {
+    return switch (item.commandType) {
+      'capture_photo' => 'Single Frame Pose Run',
+      'start_recording' => 'Motion Capture Pose Run',
+      _ => 'Capture Pipeline Run',
+    };
+  }
+
+  String _runSummary(HistoryItem item) {
+    return switch (item.status) {
+      'done' =>
+        'The backend has finished packaging this run and the processed result session is ready to open.',
+      'processing' =>
+        'This run is still moving through the command and result pipeline. Open History for more detail.',
+      'failed' =>
+        'This run did not complete cleanly. Check the device heartbeat, backend logs, and generated result files.',
+      _ =>
+        'This run is queued and waiting for the Raspberry Pi agent to continue the capture pipeline.',
+    };
+  }
+
+  String _displayStatus(String status) {
+    return switch (status) {
+      'done' => 'DONE',
+      'processing' => 'PROCESSING',
+      'failed' => 'FAILED',
+      'queued' => 'QUEUED',
+      _ => status.toUpperCase(),
+    };
+  }
+
+  String _displayCommand(String commandType) {
+    return switch (commandType) {
+      'capture_photo' => 'Photo',
+      'start_recording' => 'Video',
+      _ => commandType,
+    };
+  }
+}
+
+class _LoadingCard extends StatelessWidget {
+  final String title;
+  final String message;
+
+  const _LoadingCard({
+    required this.title,
+    required this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        gradient: AppColors.surfaceGradient,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: AppTypography.bodyLarge.copyWith(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  message,
+                  style: AppTypography.bodyMedium.copyWith(
+                    color: AppColors.textPrimary.withValues(alpha: 0.84),
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MessageCard extends StatelessWidget {
+  final String? title;
+  final String message;
+  final Color accent;
+
+  const _MessageCard({
+    this.title,
+    required this.message,
+    this.accent = AppColors.accentSoft,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.background.withValues(alpha: 0.28),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: accent.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            title == null ? Icons.sync_rounded : Icons.info_outline_rounded,
+            size: 18,
+            color: accent,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (title != null) ...[
+                  Text(
+                    title!,
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: AppColors.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
+                Text(
+                  message,
+                  style: AppTypography.bodyMedium.copyWith(
+                    color: AppColors.textPrimary.withValues(alpha: 0.84),
+                    fontSize: 13,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -649,4 +1015,61 @@ class _DashboardAction {
     this.isPrimary = false,
     this.isWide = false,
   });
+}
+
+class _DashboardSnapshot {
+  final List<DeviceConnectionNode> devices;
+  final List<HistoryItem> history;
+  final DateTime loadedAt;
+
+  const _DashboardSnapshot({
+    required this.devices,
+    required this.history,
+    required this.loadedAt,
+  });
+
+  int get totalCount => devices.isEmpty ? 2 : devices.length;
+
+  int get connectedCount => devices
+      .where((device) => device.status == DeviceLinkStatus.connected)
+      .length;
+
+  bool get allConnected =>
+      devices.isNotEmpty &&
+      devices.every((device) => device.status == DeviceLinkStatus.connected);
+
+  double get readiness {
+    if (devices.isEmpty) {
+      return 0;
+    }
+    return connectedCount / devices.length;
+  }
+
+  int get activeRuns => history
+      .where((item) => item.status == 'queued' || item.status == 'processing')
+      .length;
+
+  int get failedRuns =>
+      history.where((item) => item.status == 'failed').length;
+
+  int get runsToday => history
+      .where((item) => _isSameDay(item.createdAt.toLocal(), loadedAt.toLocal()))
+      .length;
+
+  HistoryItem? get latestRun => history.isEmpty ? null : history.first;
+
+  DeviceConnectionNode? nodeFor(DeviceEndpoint endpoint) {
+    for (final device in devices) {
+      if (device.endpoint == endpoint) {
+        return device;
+      }
+    }
+    return null;
+  }
+}
+
+bool _isSameDay(DateTime left, DateTime right) {
+  return left.year == right.year &&
+      left.month == right.month &&
+      left.day == right.day;
 }

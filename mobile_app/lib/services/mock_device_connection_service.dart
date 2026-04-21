@@ -85,20 +85,16 @@ class DeviceConnectionService {
   Future<List<DeviceConnectionNode>> scanDevices() => _loadNodes();
 
   Future<DeviceConnectionNode> connectDevice(DeviceEndpoint endpoint) async {
-    return _refreshEndpoint(endpoint);
+    return _loadNodeForEndpoint(endpoint);
   }
 
   Future<DeviceConnectionNode> reconnectDevice(DeviceEndpoint endpoint) async {
-    return _refreshEndpoint(endpoint);
+    return _loadNodeForEndpoint(endpoint);
   }
 
-  Future<DeviceConnectionNode> _refreshEndpoint(DeviceEndpoint endpoint) async {
+  Future<DeviceConnectionNode> _loadNodeForEndpoint(DeviceEndpoint endpoint) async {
     final nodes = await _loadNodes();
-    final node = nodes.firstWhere((item) => item.endpoint == endpoint);
-    if (node.status != DeviceLinkStatus.connected) {
-      throw StateError(node.statusDetail);
-    }
-    return node;
+    return nodes.firstWhere((item) => item.endpoint == endpoint);
   }
 
   Future<List<DeviceConnectionNode>> _loadNodes() async {

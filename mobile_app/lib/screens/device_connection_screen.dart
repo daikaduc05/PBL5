@@ -26,7 +26,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
   bool _isScanning = false;
   DateTime? _lastScanAt;
   String _networkMessage =
-      'Scan the local subnet to verify the Raspberry Pi and processing server before recording.';
+      'Refresh backend health and the latest Raspberry Pi heartbeat before recording.';
 
   @override
   void initState() {
@@ -68,8 +68,8 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
     setState(() {
       _isScanning = true;
       _networkMessage = focus == null
-          ? 'Sweeping the local network for both PoseTrack endpoints...'
-          : 'Refreshing ${focus.label} telemetry on the local subnet...';
+          ? 'Refreshing backend health and endpoint status...'
+          : 'Refreshing the latest ${focus.label} status from the backend...';
     });
 
     final devices = await _service.scanDevices();
@@ -84,33 +84,37 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
       _lastScanAt = DateTime.now();
       _networkMessage = focus == null
           ? _scanCompleteMessage(devices)
-          : '${focus.label} refreshed. ${_readyCountLabel(devices)} ready for capture.';
+          : '${focus.label} status refreshed. ${_readyCountLabel(devices)} endpoints are ready for capture.';
     });
   }
 
   Future<void> _connectEndpoint(DeviceEndpoint endpoint) async {
     await _runEndpointAction(
       endpoint: endpoint,
-      pendingMessage: 'Connecting to ${endpoint.label}...',
+      pendingMessage: 'Checking ${endpoint.label} status...',
       pendingDetail:
-          'Opening the secure PoseTrack link and validating telemetry packets.',
+          'Refreshing the latest backend status, heartbeat, and endpoint details.',
       action: _service.connectDevice,
-      successMessage: '${endpoint.label} is linked and ready.',
+      successMessage: '${endpoint.label} is reachable and ready.',
+      offlineMessage:
+          '${endpoint.label} is still offline. Check the backend status or Pi heartbeat and refresh again.',
       failureMessage:
-          'PoseTrack could not link ${endpoint.label}. Scan and try again.',
+          'PoseTrack could not refresh ${endpoint.label} right now. Check the configured addresses and try again.',
     );
   }
 
   Future<void> _reconnectEndpoint(DeviceEndpoint endpoint) async {
     await _runEndpointAction(
       endpoint: endpoint,
-      pendingMessage: 'Reconnecting ${endpoint.label}...',
+      pendingMessage: 'Retrying ${endpoint.label} status check...',
       pendingDetail:
-          'Refreshing the current session token and verifying the next heartbeat.',
+          'Retrying the backend request and waiting for the next resolved status.',
       action: _service.reconnectDevice,
-      successMessage: '${endpoint.label} session refreshed successfully.',
+      successMessage: '${endpoint.label} status check succeeded.',
+      offlineMessage:
+          '${endpoint.label} is still not ready. Confirm the device process is running, then retry.',
       failureMessage:
-          'Reconnect failed for ${endpoint.label}. Try scanning the subnet again.',
+          'Retry failed for ${endpoint.label}. Refresh all endpoint status and try again.',
     );
   }
 
@@ -121,6 +125,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
     required Future<DeviceConnectionNode> Function(DeviceEndpoint endpoint)
     action,
     required String successMessage,
+    required String offlineMessage,
     required String failureMessage,
   }) async {
     if (_busyEndpoints.contains(endpoint) || _isScanning) {
@@ -133,7 +138,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
       _updateLocalDevice(
         endpoint,
         status: DeviceLinkStatus.connecting,
-        lastSeen: 'Negotiating now',
+        lastSeen: 'Refreshing now',
         statusDetail: pendingDetail,
       );
       _networkMessage = pendingMessage;
@@ -151,7 +156,9 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
         final nextBusy = Set<DeviceEndpoint>.from(_busyEndpoints)
           ..remove(endpoint);
         _busyEndpoints = nextBusy;
-        _networkMessage = successMessage;
+        _networkMessage = updated.status == DeviceLinkStatus.connected
+            ? successMessage
+            : offlineMessage;
       });
     } catch (_) {
       if (!mounted) {
@@ -223,10 +230,10 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
     }
 
     if (connectedCount == 0) {
-      return 'No endpoints are linked yet. Scan the network and connect both services.';
+      return 'No endpoints are ready yet. Refresh the backend and confirm both services are online.';
     }
 
-    return '$connectedCount of ${devices.length} endpoints are ready. Finish the remaining link to continue.';
+    return '$connectedCount of ${devices.length} endpoints are ready. Refresh the remaining service to continue.';
   }
 
   String _scanCompleteMessage(List<DeviceConnectionNode> devices) {
@@ -234,7 +241,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
         .where((device) => device.status == DeviceLinkStatus.connected)
         .length;
 
-    return 'Scan complete. $connectedCount of ${devices.length} endpoints are reachable right now.';
+    return 'Refresh complete. $connectedCount of ${devices.length} endpoints are reachable right now.';
   }
 
   String _readyCountLabel(List<DeviceConnectionNode> devices) {
@@ -309,7 +316,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
                             const SectionTitle(
                               title: 'Device Endpoints',
                               subtitle:
-                                  'Link the Raspberry Pi and server before starting the capture pipeline.',
+                                  'Refresh the Raspberry Pi and server status before starting the capture pipeline.',
                             ),
                             const SizedBox(height: 16),
                             if (_isInitialLoad && _devices.isEmpty)
@@ -415,7 +422,7 @@ class _ConnectionHeader extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                'Pair the edge capture node and processing backend from a clean mobile IoT control interface.',
+                'Review the latest backend health and Raspberry Pi heartbeat from one mobile status screen.',
                 style: AppTypography.bodyMedium.copyWith(
                   fontSize: 14,
                   height: 1.24,
@@ -531,7 +538,7 @@ class _ConnectionOverviewCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        'Track mobile readiness, subnet discovery, and endpoint health before launching the next PoseTrack session.',
+                        'Track app readiness, backend health, and endpoint heartbeat before launching the next PoseTrack session.',
                         style: AppTypography.bodyMedium.copyWith(
                           fontSize: 14,
                           height: 1.25,
@@ -557,7 +564,7 @@ class _ConnectionOverviewCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Subnet',
+                        'Scope',
                         style: AppTypography.bodyMedium.copyWith(
                           color: AppColors.textMuted,
                           fontSize: 11,
@@ -565,7 +572,7 @@ class _ConnectionOverviewCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '192.168.1.x',
+                        'Backend + Pi',
                         style: AppTypography.bodyMedium.copyWith(
                           color: AppColors.textPrimary,
                           fontSize: 13,
@@ -594,13 +601,13 @@ class _ConnectionOverviewCard extends StatelessWidget {
                     highlighted: connectedCount > 0,
                   ),
                   MetricPill(
-                    label: 'Live Handshakes',
+                    label: 'Live Checks',
                     value: '$connectingCount',
                     icon: Icons.sync_rounded,
                     highlighted: connectingCount > 0,
                   ),
                   MetricPill(
-                    label: 'Last Scan',
+                    label: 'Last Refresh',
                     value: lastScanLabel,
                     icon: Icons.radar_rounded,
                   ),
@@ -872,20 +879,20 @@ class _DeviceConnectionCard extends StatelessWidget {
               runSpacing: 10,
               children: [
                 _InlineActionButton(
-                  label: 'Scan',
+                  label: 'Refresh',
                   icon: Icons.radar_rounded,
                   accent: AppColors.accentSoft,
                   onTap: _canScan ? onScan : null,
                 ),
                 _InlineActionButton(
-                  label: 'Connect',
+                  label: 'Check Now',
                   icon: Icons.link_rounded,
                   accent: AppColors.primary,
                   isPrimary: true,
                   onTap: _canConnect ? onConnect : null,
                 ),
                 _InlineActionButton(
-                  label: 'Reconnect',
+                  label: 'Retry',
                   icon: Icons.refresh_rounded,
                   accent: AppColors.primary,
                   onTap: _canReconnect ? onReconnect : null,
@@ -933,8 +940,8 @@ class _ConnectionFooterHint extends StatelessWidget {
           Expanded(
             child: Text(
               isReady
-                  ? 'Both endpoints are locked in. Continue to Capture to start the mobile recording flow.'
-                  : '$connectedCount of ${totalCount == 0 ? 2 : totalCount} endpoints are connected. Finish both links to unlock capture.',
+                  ? 'Both endpoints are reporting healthy status. Continue to Capture to start the mobile recording flow.'
+                  : '$connectedCount of ${totalCount == 0 ? 2 : totalCount} endpoints are currently ready. Refresh both statuses to unlock capture.',
               style: AppTypography.bodyMedium.copyWith(
                 color: AppColors.textPrimary.withValues(alpha: 0.88),
                 fontSize: 14,

@@ -10,6 +10,10 @@ class SessionSummaryCard extends StatelessWidget {
   final String keypoints;
   final String duration;
   final String timestamp;
+  final String confidenceLabel;
+  final String keypointsLabel;
+  final String durationLabel;
+  final String badgeLabel;
 
   const SessionSummaryCard({
     super.key,
@@ -20,6 +24,10 @@ class SessionSummaryCard extends StatelessWidget {
     required this.keypoints,
     required this.duration,
     required this.timestamp,
+    this.confidenceLabel = 'Confidence',
+    this.keypointsLabel = 'Keypoints',
+    this.durationLabel = 'Duration',
+    this.badgeLabel = 'LATEST SESSION',
   });
 
   @override
@@ -66,7 +74,7 @@ class SessionSummaryCard extends StatelessWidget {
                         ),
                       ),
                       child: Text(
-                        'LATEST SESSION',
+                        badgeLabel,
                         style: AppTypography.bodyMedium.copyWith(
                           color: AppColors.primary,
                           fontWeight: FontWeight.w700,
@@ -108,15 +116,15 @@ class SessionSummaryCard extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: _SessionMetric(label: 'Confidence', value: confidence),
+                child: _SessionMetric(label: confidenceLabel, value: confidence),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: _SessionMetric(label: 'Keypoints', value: keypoints),
+                child: _SessionMetric(label: keypointsLabel, value: keypoints),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: _SessionMetric(label: 'Duration', value: duration),
+                child: _SessionMetric(label: durationLabel, value: duration),
               ),
             ],
           ),
