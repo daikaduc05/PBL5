@@ -56,8 +56,6 @@ Mobile App
 The project is not complete because the system still has important gaps between
 "real MVP demo" and "finished project":
 
-- The default app path still carries legacy mock fallback logic in places such
-  as `processing_status_screen.dart` when backend ids are missing.
 - Replay mode still coexists with real camera capture and needs hardware-level
   validation before it can be treated as a secondary fallback only.
 - Some stale documents still describe the older demo architecture instead of
@@ -245,12 +243,15 @@ Definition of done:
 
 If work resumes from this snapshot, start here:
 
-1. Phase 4: remove or isolate the remaining mock/demo fallback paths.
-2. Phase 5: run and document the first full end-to-end verification.
-3. Clean up or rewrite stale docs that still describe the older demo architecture.
+1. Phase 5: run and document the first full end-to-end verification across app,
+   backend, Pi agent, and worker.
+2. Clean up or rewrite stale docs that still describe the older demo
+   architecture, especially `OVERVIEW.md`.
+3. Decide whether the remaining demo-only helpers inside
+   `MockPoseTrackingService` should be kept for explicit demos or removed.
 
 Do not start with UI polish. The biggest blockers are now truthful app state,
-persisted configuration, and real-stack verification.
+real-stack verification, and keeping the docs aligned with the canonical flow.
 
 ## 8. Final Completion Checklist
 
@@ -263,6 +264,6 @@ persisted configuration, and real-stack verification.
 - [x] `Home` shows live data.
 - [x] `Connect` actions match their real behavior.
 - [x] `Settings` persist configuration.
-- [ ] Default app flow no longer relies on legacy mock finalize behavior.
+- [x] Default app flow no longer relies on legacy mock finalize behavior.
 - [ ] Backend and mobile docs match the code.
 - [ ] End-to-end test has been completed on real hardware.

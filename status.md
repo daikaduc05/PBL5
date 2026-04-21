@@ -46,8 +46,9 @@ pending -> acknowledged -> running -> completed | failed
 - `Capture` no longer creates only mock drafts for the MVP path.
 - `Capture` image mode now sends `capture_photo` instead of forcing everything through `start_recording`.
 - `Capture` video mode now sends `start_recording` when recording begins and `stop_recording` when the user stops, then moves to `Processing`.
-- `Processing` no longer finishes by mock finalize when backend ids are available.
+- `Processing` is now backend-only for the default flow and no longer falls back to local mock finalize behavior.
 - Result screens now share one backend result source of truth through `ResultApi`.
+- `Result` route now opens backend sessions only instead of accepting demo result objects on the main path.
 - `History` now opens the exact backend session via `session_key` instead of jumping to the generic results list.
 - `Settings` now persist the configured server, Raspberry Pi, and capture defaults locally across app restarts.
 - Removed the old `BackendResultsService` compatibility shim after cleaning imports.
@@ -92,13 +93,14 @@ The action items from the previous snapshot are now completed:
 3. old compatibility shim removed
 4. legacy `/jobs` create path retired so it no longer creates fake processing runs
 5. `Home`, `Connect`, and `Settings` now reflect the real runtime model more closely
+6. the default `Processing -> Result` path is now backend-only instead of quietly dropping into mock finalize/result behavior
 
 ## Optional Next Improvements
 
 1. surface `history/{history_id}.result` in a dedicated mobile detail screen if needed
-2. audit the remaining `MockPoseTrackingService` finalize/result fallback on the default app path
-3. run the first full end-to-end verification on backend + Pi + worker + mobile app
-4. rewrite or retire stale docs such as `OVERVIEW.md`
+2. run the first full end-to-end verification on backend + Pi + worker + mobile app
+3. rewrite or retire stale docs such as `OVERVIEW.md`
+4. decide whether the remaining demo-only methods in `MockPoseTrackingService` should be kept for explicit demos or removed entirely
 
 ## Verification Done
 

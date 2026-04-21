@@ -3,25 +3,21 @@ import 'package:flutter/material.dart';
 import '../components/app_button.dart';
 import '../components/glass_panel.dart';
 import '../components/pose_track_screen_frame.dart';
-import '../components/pose_visualization_card.dart';
 import '../components/screen_container.dart';
 import '../components/screen_header_bar.dart';
 import '../components/status_badge.dart';
 import '../models/result_models.dart';
 import '../navigation/app_routes.dart';
-import '../services/mock_pose_tracking_service.dart';
 import '../services/result_api.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_typography.dart';
 import '../utils/app_formatters.dart';
 
 class ResultScreen extends StatefulWidget {
-  final PoseAnalysisResult? initialResult;
   final ResultScreenArgs? sessionArgs;
 
   const ResultScreen({
     super.key,
-    this.initialResult,
     this.sessionArgs,
   });
 
@@ -32,7 +28,6 @@ class ResultScreen extends StatefulWidget {
 class _ResultScreenState extends State<ResultScreen> {
   final ResultApi _resultApi = ResultApi();
 
-  PoseAnalysisResult? _legacyResult;
   ResultSessionDetail? _session;
   ResultFrameItem? _selectedFrame;
   FrameResultDetail? _frameDetail;
@@ -48,17 +43,7 @@ class _ResultScreenState extends State<ResultScreen> {
     _loadScreen();
   }
 
-  Future<void> _loadScreen() async {
-    if (widget.initialResult != null) {
-      setState(() {
-        _legacyResult = widget.initialResult;
-        _isLoading = false;
-      });
-      return;
-    }
-
-    await _loadBackendSession();
-  }
+  Future<void> _loadScreen() async => _loadBackendSession();
 
   Future<void> _loadBackendSession() async {
     setState(() {
@@ -206,14 +191,6 @@ class _ResultScreenState extends State<ResultScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_legacyResult != null) {
-      return _LegacyResultView(
-        result: _legacyResult!,
-        onBackHome: _goHome,
-        onOpenHistory: _openHistory,
-      );
-    }
-
     final session = _session;
     final selectedFrame = _selectedFrame;
     final statusColor = _errorMessage == null
@@ -312,124 +289,6 @@ class _ResultScreenState extends State<ResultScreen> {
                   ),
                 ),
               ],
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _LegacyResultView extends StatelessWidget {
-  final PoseAnalysisResult result;
-  final VoidCallback onBackHome;
-  final VoidCallback onOpenHistory;
-
-  const _LegacyResultView({
-    required this.result,
-    required this.onBackHome,
-    required this.onOpenHistory,
-  });
-
-  String get _confidenceText =>
-      '${(result.confidence * 100).toStringAsFixed(1)}%';
-
-  @override
-  Widget build(BuildContext context) {
-    return ScreenContainer(
-      padding: EdgeInsets.zero,
-      child: PoseTrackScreenFrame(
-        builder: (context, minHeight) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ScreenHeaderBar(
-                title: 'Pose Result',
-                subtitle:
-                    'Local demo result from the capture flow. History and backend browsing now use the FastAPI result endpoints.',
-                onBackPressed: onBackHome,
-                trailing: const StatusBadge(
-                  label: 'Demo Result',
-                  color: AppColors.success,
-                  icon: Icons.check_circle_outline_rounded,
-                ),
-              ),
-              const SizedBox(height: 24),
-              PoseVisualizationCard(
-                aspectRatio: 0.88,
-                title: 'Processed Pose Preview',
-                subtitle:
-                    'Mock preview retained for the capture demo path while backend results are wired into History.',
-                statusLabel: 'Processed Image',
-                footerLabel: 'Confidence',
-                footerValue: _confidenceText,
-                timerLabel: result.mode.label,
-                processed: true,
-              ),
-              const SizedBox(height: 18),
-              GlassPanel(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      result.title,
-                      style: AppTypography.h3.copyWith(fontSize: 20),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      result.feedback,
-                      style: AppTypography.bodyMedium.copyWith(
-                        color: AppColors.textSecondary,
-                        fontSize: 14,
-                        height: 1.28,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: [
-                        _DetailChip(
-                          icon: Icons.badge_rounded,
-                          label: result.sessionId,
-                        ),
-                        _DetailChip(
-                          icon: Icons.accessibility_new_rounded,
-                          label:
-                              '${result.keypointsDetected}/${result.keypointsTotal} keypoints',
-                        ),
-                        _DetailChip(
-                          icon: Icons.auto_graph_rounded,
-                          label: _confidenceText,
-                        ),
-                        _DetailChip(
-                          icon: Icons.schedule_rounded,
-                          label: formatShortDateTime(result.capturedAt),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 18),
-              Row(
-                children: [
-                  Expanded(
-                    child: AppButton(
-                      text: 'Open History',
-                      onPressed: onOpenHistory,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: AppButton(
-                      text: 'Back to Home',
-                      onPressed: onBackHome,
-                      isSecondary: true,
-                    ),
-                  ),
-                ],
-              ),
             ],
           );
         },

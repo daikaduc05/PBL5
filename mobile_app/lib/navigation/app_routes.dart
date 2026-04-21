@@ -50,17 +50,12 @@ class AppRoutes {
         return _missingArgumentRoute('Capture session draft');
       case captureResult:
         final args = routeSettings.arguments;
-        if (args is PoseAnalysisResult) {
-          return MaterialPageRoute(
-            builder: (_) => ResultScreen(initialResult: args),
-          );
-        }
         if (args is ResultScreenArgs) {
           return MaterialPageRoute(
             builder: (_) => ResultScreen(sessionArgs: args),
           );
         }
-        return _missingArgumentRoute('Pose analysis result or backend session');
+        return _missingArgumentRoute('Backend result session');
       case resultSessions:
         return MaterialPageRoute(
           builder: (_) => const ResultSessionsScreen(),

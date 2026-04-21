@@ -30,7 +30,6 @@ class ProcessingStatusScreen extends StatefulWidget {
 class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
     with SingleTickerProviderStateMixin {
   final ApiService _api = ApiService();
-  final MockPoseTrackingService _poseService = MockPoseTrackingService();
   final ResultApi _resultApi = ResultApi();
 
   late final AnimationController _pulseController;
@@ -38,9 +37,7 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
   Timer? _timer;
 
   double _progress = 0.0;
-  bool _isFinalizing = false;
   bool _isPolling = false;
-  PoseAnalysisResult? _legacyResult;
   DeviceCommandInfo? _command;
   ResultSessionDetail? _resultSession;
   String? _errorMessage;
@@ -53,10 +50,11 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
       duration: const Duration(milliseconds: 1600),
     )..repeat();
     _stages = _buildProcessingStages();
-    if (_usesBackendPipeline) {
+    if (_hasBackendIdentifiers) {
       _startBackendPolling();
     } else {
-      _startLegacyProgress();
+      _errorMessage =
+          'This processing screen now requires a live backend session and command id. Start capture from the current backend-connected flow.';
     }
   }
 
@@ -67,14 +65,14 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
     super.dispose();
   }
 
-  bool get _usesBackendPipeline =>
+  bool get _hasBackendIdentifiers =>
       widget.draft.commandId != null && widget.draft.deviceId != null;
 
-  bool get _isResultReady => _usesBackendPipeline
-      ? (_resultSession?.resultReadyCount ?? 0) > 0
-      : _legacyResult != null;
+  bool get _isResultReady => (_resultSession?.resultReadyCount ?? 0) > 0;
 
-  bool get _hasFailed => _usesBackendPipeline && _command?.status == 'failed';
+  bool get _hasFailed => _hasBackendIdentifiers && _command?.status == 'failed';
+
+  bool get _hasInvalidDraft => !_hasBackendIdentifiers;
 
   int get _activeStageIndex {
     if (_isResultReady || _progress >= 1.0) {
@@ -85,29 +83,19 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
   }
 
   Duration get _estimatedRemaining {
-    if (_isResultReady || _hasFailed) {
+    if (_isResultReady || _hasFailed || _hasInvalidDraft) {
       return Duration.zero;
     }
 
-    if (!_usesBackendPipeline && _isFinalizing) {
-      return const Duration(seconds: 1);
+    if (_resultSession != null) {
+      return const Duration(seconds: 2);
     }
-
-    if (_usesBackendPipeline) {
-      if (_resultSession != null) {
-        return const Duration(seconds: 2);
-      }
-      return switch (_command?.status) {
-        'acknowledged' => const Duration(seconds: 8),
-        'running' => const Duration(seconds: 5),
-        'completed' => const Duration(seconds: 3),
-        _ => const Duration(seconds: 12),
-      };
-    }
-
-    final remaining = (1.0 - _progress).clamp(0.0, 1.0);
-    final ticks = (remaining / 0.038).ceil();
-    return Duration(milliseconds: (ticks * 220) + 420);
+    return switch (_command?.status) {
+      'acknowledged' => const Duration(seconds: 8),
+      'running' => const Duration(seconds: 5),
+      'completed' => const Duration(seconds: 3),
+      _ => const Duration(seconds: 12),
+    };
   }
 
   List<ProcessingStage> _buildProcessingStages() {
@@ -151,33 +139,6 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
     });
   }
 
-  void _startLegacyProgress() {
-    _timer = Timer.periodic(const Duration(milliseconds: 220), (timer) async {
-      if (!mounted || _isFinalizing || _legacyResult != null) {
-        timer.cancel();
-        return;
-      }
-
-      final increment = switch (_progress) {
-        < 0.18 => 0.055,
-        < 0.36 => 0.045,
-        < 0.58 => 0.038,
-        < 0.82 => 0.03,
-        _ => 0.022,
-      };
-      final nextProgress = (_progress + increment).clamp(0.0, 1.0).toDouble();
-
-      setState(() {
-        _progress = nextProgress;
-      });
-
-      if (nextProgress >= 1.0) {
-        timer.cancel();
-        await _finalizeLegacy();
-      }
-    });
-  }
-
   double _stageProgress(int index) {
     if (_isResultReady) {
       return 1.0;
@@ -199,7 +160,7 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
   }
 
   Future<void> _pollBackendStatus() async {
-    if (!_usesBackendPipeline || _isPolling) {
+    if (!_hasBackendIdentifiers || _isPolling) {
       return;
     }
 
@@ -294,23 +255,6 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
     };
   }
 
-  Future<void> _finalizeLegacy() async {
-    setState(() {
-      _isFinalizing = true;
-    });
-
-    final result = await _poseService.finalizeCapture(widget.draft);
-
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      _legacyResult = result;
-      _isFinalizing = false;
-    });
-  }
-
   void _goBackHome() {
     Navigator.of(
       context,
@@ -318,35 +262,23 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
   }
 
   void _openResult() {
-    if (_usesBackendPipeline) {
-      final resultSession = _resultSession;
-      if (!_isResultReady || resultSession == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'The backend is still waiting for processed frames. Please give the worker a moment.',
-            ),
+    final resultSession = _resultSession;
+    if (_hasInvalidDraft) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'This screen is missing backend identifiers. Start a new capture from the live backend flow.',
           ),
-        );
-        return;
-      }
-
-      Navigator.of(context).pushReplacementNamed(
-        AppRoutes.captureResult,
-        arguments: ResultScreenArgs(
-          sessionId: resultSession.sessionId,
-          initialFrameId: resultSession.latestResultFrameId,
         ),
       );
       return;
     }
 
-    final result = _legacyResult;
-    if (result == null) {
+    if (!_isResultReady || resultSession == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'PoseTrack is still generating the result package. Please wait a moment.',
+            'The backend is still waiting for processed frames. Please give the worker a moment.',
           ),
         ),
       );
@@ -355,7 +287,10 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
 
     Navigator.of(context).pushReplacementNamed(
       AppRoutes.captureResult,
-      arguments: result,
+      arguments: ResultScreenArgs(
+        sessionId: resultSession.sessionId,
+        initialFrameId: resultSession.latestResultFrameId,
+      ),
     );
   }
 
@@ -393,23 +328,26 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
     if (_isResultReady) {
       return 'Result Ready';
     }
+    if (_hasInvalidDraft) {
+      return 'Legacy Draft';
+    }
     if (_hasFailed) {
       return 'Failed';
     }
-    if (_usesBackendPipeline) {
-      return switch (_command?.status) {
-        'acknowledged' => 'Claimed',
-        'running' => 'Running',
-        'completed' => 'Packaging',
-        _ => _isPolling ? 'Syncing' : 'Queued',
-      };
-    }
-    return _isFinalizing ? 'Finalizing' : 'AI Running';
+    return switch (_command?.status) {
+      'acknowledged' => 'Claimed',
+      'running' => 'Running',
+      'completed' => 'Packaging',
+      _ => _isPolling ? 'Syncing' : 'Queued',
+    };
   }
 
   Color get _statusColor {
     if (_isResultReady) {
       return AppColors.success;
+    }
+    if (_hasInvalidDraft) {
+      return AppColors.warning;
     }
     if (_hasFailed || _errorMessage != null) {
       return AppColors.warning;
@@ -421,47 +359,47 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
     if (_isResultReady) {
       return 'Processing Complete';
     }
+    if (_hasInvalidDraft) {
+      return 'Backend Flow Required';
+    }
     if (_hasFailed) {
       return 'Command Failed';
     }
-    if (_usesBackendPipeline) {
-      if (_resultSession != null && _resultSession!.frameCount > 0) {
-        return 'Worker Processing Frames';
-      }
-      return switch (_command?.status) {
-        'acknowledged' => 'Pi Agent Claimed the Command',
-        'running' => 'Capture Stream Is Running',
-        'completed' => 'Waiting for Result Files',
-        _ => 'Waiting for Raspberry Pi',
-      };
+    if (_resultSession != null && _resultSession!.frameCount > 0) {
+      return 'Worker Processing Frames';
     }
-    return _stages[_activeStageIndex].title;
+    return switch (_command?.status) {
+      'acknowledged' => 'Pi Agent Claimed the Command',
+      'running' => 'Capture Stream Is Running',
+      'completed' => 'Waiting for Result Files',
+      _ => 'Waiting for Raspberry Pi',
+    };
   }
 
   String get _heroDescription {
     if (_isResultReady) {
       return 'Pose overlays, confidence scores, and backend metadata are ready for review.';
     }
+    if (_hasInvalidDraft) {
+      return 'The app no longer runs local mock processing here. Start the capture from the connected backend flow so this screen can poll the real command and result session.';
+    }
     if (_hasFailed) {
       return _errorMessage ??
           'The command reached a failed state. Check the Pi agent log and backend worker output.';
     }
-    if (_usesBackendPipeline) {
-      if (_resultSession != null && _resultSession!.frameCount > 0) {
-        return 'The backend session has started receiving processed frames and is packaging the latest result JSON.';
-      }
-      return switch (_command?.status) {
-        'acknowledged' =>
-          'The Pi agent has acknowledged the command and is preparing the replay or capture workflow.',
-        'running' =>
-          'Frames should now be moving through the Pi agent and ZeroMQ worker pipeline.',
-        'completed' =>
-          'The edge command completed; the app is waiting for the result session to finish indexing processed frames.',
-        _ =>
-          'The command is still queued on the backend and waiting for the Raspberry Pi to claim it.',
-      };
+    if (_resultSession != null && _resultSession!.frameCount > 0) {
+      return 'The backend session has started receiving processed frames and is packaging the latest result JSON.';
     }
-    return _stages[_activeStageIndex].description;
+    return switch (_command?.status) {
+      'acknowledged' =>
+        'The Pi agent has acknowledged the command and is preparing the replay or capture workflow.',
+      'running' =>
+        'Frames should now be moving through the Pi agent and ZeroMQ worker pipeline.',
+      'completed' =>
+        'The edge command completed; the app is waiting for the result session to finish indexing processed frames.',
+      _ =>
+        'The command is still queued on the backend and waiting for the Raspberry Pi to claim it.',
+    };
   }
 
   @override
@@ -618,13 +556,13 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
                           label: 'Upload',
                           value: widget.draft.autoUpload ? 'Auto' : 'Manual',
                         ),
-                        if (_usesBackendPipeline)
+                        if (_hasBackendIdentifiers)
                           _InfoPill(
                             icon: Icons.memory_rounded,
                             label: 'Command',
                             value: (_command?.status ?? 'pending').toUpperCase(),
                           ),
-                        if (_usesBackendPipeline && _resultSession != null)
+                        if (_hasBackendIdentifiers && _resultSession != null)
                           _InfoPill(
                             icon: Icons.filter_frames_rounded,
                             label: 'Frames',
@@ -727,7 +665,6 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
                 child: AppButton(
                   text: 'Open Result',
                   onPressed: _openResult,
-                  isLoading: !_usesBackendPipeline && _isFinalizing,
                 ),
               ),
               const SizedBox(height: 12),
