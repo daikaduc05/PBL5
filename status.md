@@ -19,6 +19,13 @@ The MVP app orchestration is now partially real:
 - `Processing` polls real command status and waits for real result session output.
 - `Open Result` from `Processing` now opens the backend result session directly.
 
+The first live Raspberry Pi CSI camera verification has now passed:
+
+- verified on 2026-04-21
+- command `7` completed successfully
+- session `sess_000008` produced real worker outputs
+- app `Result` opened the same processed backend session
+
 ## What Was Finished Recently
 
 ### Backend / Pi
@@ -38,6 +45,12 @@ pending -> acknowledged -> running -> completed | failed
   - live camera video streaming
   - background capture jobs so `stop_recording` can stop an active run
   - Raspberry Pi CSI camera fallback through `Picamera2` when `/dev/video0` is not available but `rpicam/libcamera` is
+- Raspberry Pi CSI camera photo capture has been manually verified end-to-end with:
+  - Pi agent
+  - backend command lifecycle
+  - ZeroMQ worker inference
+  - backend results
+  - mobile `Result`
 
 ### Mobile App
 
@@ -54,6 +67,7 @@ pending -> acknowledged -> running -> completed | failed
 - `Settings` now persist the configured server, Raspberry Pi, and capture defaults locally across app restarts.
 - Removed the old `BackendResultsService` compatibility shim after cleaning imports.
 - Fixed a Windows desktop polling bug where `ApiService` could close `HttpClient` before fully reading `/api/*` responses, which made the app report intermittent offline errors even while the backend was returning `200 OK`.
+- Fixed a small result-screen layout overflow in the frame browser on desktop builds.
 - Fixed backend result contract mismatch:
 
 ```text
@@ -73,6 +87,11 @@ so the backend result screen can open sessions produced by the real flow.
 - `History` now reads canonical capture runs from `device_commands` instead of the old stub-only `jobs` flow.
 - Backend `history/{history_id}` now exposes `command_id`, raw `command_status`, mapped history `status`, and attached result-session metadata.
 - Mobile `History` now labels entries as real runs rather than fake jobs.
+- Verified against local backend data:
+  - latest command `7`
+  - latest session `sess_000008`
+  - `backend/workers/results/sess_000008` contains `frame_1_pose.jpg` and `frame_1_result.json`
+  - this means the newest real run is eligible to appear in `History` and open the same session in `Result`
 
 ### Docs
 
@@ -101,8 +120,8 @@ The action items from the previous snapshot are now completed:
 
 ## Optional Next Improvements
 
-1. surface `history/{history_id}.result` in a dedicated mobile detail screen if needed
-2. execute `STACK_SETUP_AND_E2E_RUNBOOK.md` on backend + Pi + worker + mobile app and record the first real pass/fail result
+1. verify `video mode` end-to-end on the live Raspberry Pi camera path
+2. surface `history/{history_id}.result` in a dedicated mobile detail screen if needed
 3. rewrite or retire stale docs such as `OVERVIEW.md`
 4. decide whether the remaining demo-only methods in `MockPoseTrackingService` should be kept for explicit demos or removed entirely
 
@@ -110,4 +129,9 @@ The action items from the previous snapshot are now completed:
 
 - `python -m compileall backend/app`
 - `python -m compileall backend/pi_agent`
+- local backend database check confirmed newest canonical run:
+  - command `7`
+  - session `sess_000008`
+  - command status `completed`
+  - result files exist under `backend/workers/results/sess_000008`
 - `dart analyze` was attempted for the modified Flutter files, but it timed out in this environment and still needs a clean rerun locally.

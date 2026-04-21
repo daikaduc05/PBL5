@@ -471,7 +471,7 @@ class _FrameChooserPanel extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           SizedBox(
-            height: 60,
+            height: 68,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: session.frames.length,

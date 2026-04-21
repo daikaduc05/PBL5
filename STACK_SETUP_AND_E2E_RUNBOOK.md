@@ -16,6 +16,15 @@ Use this file when you need to:
 - collect evidence for pass/fail
 - continue Phase 5 work from `PROJECT_COMPLETION_PLAN.md`
 
+Current verified milestone:
+
+- On 2026-04-21, a real Raspberry Pi CSI camera image run passed end-to-end.
+- Verified canonical run:
+  - command id `7`
+  - session key `sess_000008`
+  - result files written under `backend/workers/results/sess_000008`
+  - app opened the processed session successfully from `Result`
+
 ## 2. Source Of Truth Order
 
 When docs conflict, trust them in this order:
@@ -145,6 +154,13 @@ sudo apt install -y python3-picamera2 rpicam-apps v4l-utils
 The current Pi agent will try `Picamera2` first for live camera capture, then
 fall back to OpenCV/V4L2 if needed.
 
+For the verified CSI camera path, prefer running the Pi agent with the system
+Python so `Picamera2` is available:
+
+```bash
+/usr/bin/python3 pi_agent.py --backend http://<backend-host>:8002 --device-name "Raspberry Pi 4B" --device-code pi-001
+```
+
 ## 8. Flutter Setup
 
 From `mobile_app`:
@@ -250,6 +266,12 @@ From the repo root on the Pi, or from the Pi workspace copy:
 
 ```bash
 python3 backend/pi_agent/pi_agent.py --backend http://<backend-host>:8002 --device-name "Raspberry Pi 4B" --device-code pi-001
+```
+
+If the Pi uses a CSI camera through `Picamera2`, prefer:
+
+```bash
+/usr/bin/python3 backend/pi_agent/pi_agent.py --backend http://<backend-host>:8002 --device-name "Raspberry Pi 4B" --device-code pi-001
 ```
 
 Expected signals:
@@ -378,13 +400,26 @@ Run this only after replay mode is stable.
 Preconditions:
 
 - replay directory is missing or empty
-- Pi camera is physically connected and readable by OpenCV
+- Pi camera is physically connected and readable through `rpicam/libcamera`
+- `python3-picamera2` is installed on the Pi
+- if using a CSI camera, the Pi agent is started with `/usr/bin/python3` when
+  needed so `Picamera2` is available
 
 Expected differences:
 
 - Pi logs should mention `camera` capture instead of `replay`
+- for CSI cameras, Pi logs should mention `Picamera2` capture success rather
+  than falling straight to OpenCV
 - worker output should still land in the same
   `backend/workers/results/<session_key>` structure
+
+Current verified result:
+
+- image mode with a real Raspberry Pi CSI camera has passed on 2026-04-21
+- `capture_photo` completed through the canonical command flow
+- the worker wrote `frame_1_pose.jpg` and `frame_1_result.json`
+- the app opened the same processed session successfully
+- video mode still needs its own full live-camera verification pass
 
 ## 16. Evidence To Record For Each Real Run
 
