@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
@@ -604,68 +607,17 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
     );
   }
 
-  String? _buildPreviewUrl() {
-    final raspberryPiIp = _raspberryPiIp?.trim();
-    if (raspberryPiIp == null || raspberryPiIp.isEmpty) {
-      return null;
-    }
-
-    return 'http://$raspberryPiIp:${BackendConfig.defaultPiPreviewPort}/preview/latest.jpg?tick=$_previewRefreshTick';
-  }
-
   Widget _buildCapturePreviewContent() {
-    final previewUrl = _buildPreviewUrl();
+    final raspberryPiIp = _raspberryPiIp?.trim();
     final latestPoseImageUrl = _isRecording ? _latestInferenceFrame?.poseImageUrl : null;
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (previewUrl != null)
-          Image.network(
-            previewUrl,
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-            filterQuality: FilterQuality.low,
-            loadingBuilder: (context, child, loadingProgress) {
-              if (loadingProgress == null) {
-                return child;
-              }
-
-              return Stack(
-                fit: StackFit.expand,
-                children: const [
-                  _PreviewPlaceholder(
-                    icon: Icons.wifi_tethering_rounded,
-                    title: 'Connecting to Pi preview',
-                    message:
-                        'The app is waiting for the Raspberry Pi preview endpoint to deliver the first frame.',
-                  ),
-                  Center(
-                    child: SizedBox(
-                      width: 28,
-                      height: 28,
-                      child: CircularProgressIndicator(strokeWidth: 2.4),
-                    ),
-                  ),
-                ],
-              );
-            },
-            errorBuilder: (context, error, stackTrace) {
-              return const _PreviewPlaceholder(
-                icon: Icons.wifi_find_rounded,
-                title: 'Waiting for Pi preview',
-                message:
-                    'The Raspberry Pi preview server is not sending frames yet. Check the Pi agent or camera if this stays empty.',
-              );
-            },
-          )
-        else
-          const _PreviewPlaceholder(
-            icon: Icons.videocam_off_rounded,
-            title: 'Preview unavailable',
-            message:
-                'Set the Raspberry Pi IP in Settings so the app can open the Pi preview feed.',
-          ),
+        _PiPreviewSocketView(
+          raspberryPiIp: raspberryPiIp,
+          port: BackendConfig.defaultPiPreviewSocketPort,
+        ),
         DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -1072,6 +1024,275 @@ class _PreviewPlaceholder extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _PiPreviewSocketView extends StatefulWidget {
+  final String? raspberryPiIp;
+  final int port;
+
+  const _PiPreviewSocketView({
+    required this.raspberryPiIp,
+    required this.port,
+  });
+
+  @override
+  State<_PiPreviewSocketView> createState() => _PiPreviewSocketViewState();
+}
+
+class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
+  Socket? _socket;
+  StreamSubscription<Uint8List>? _socketSubscription;
+  Timer? _reconnectTimer;
+  final List<int> _buffer = <int>[];
+  Uint8List? _frameBytes;
+  bool _isConnecting = false;
+  bool _handshakeComplete = false;
+  String? _statusMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _connectIfPossible();
+  }
+
+  @override
+  void didUpdateWidget(covariant _PiPreviewSocketView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.raspberryPiIp != widget.raspberryPiIp || oldWidget.port != widget.port) {
+      _resetConnection();
+      _connectIfPossible();
+    }
+  }
+
+  @override
+  void dispose() {
+    _reconnectTimer?.cancel();
+    _socketSubscription?.cancel();
+    _closeSocket();
+    super.dispose();
+  }
+
+  void _connectIfPossible() {
+    final raspberryPiIp = widget.raspberryPiIp?.trim();
+    if (raspberryPiIp == null || raspberryPiIp.isEmpty) {
+      setState(() {
+        _statusMessage = 'Set the Raspberry Pi IP in Settings so the app can open the live preview socket.';
+      });
+      return;
+    }
+
+    _connect();
+  }
+
+  Future<void> _connect() async {
+    if (_isConnecting || _socket != null) {
+      return;
+    }
+
+    final raspberryPiIp = widget.raspberryPiIp?.trim();
+    if (raspberryPiIp == null || raspberryPiIp.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _isConnecting = true;
+      _statusMessage = 'Connecting to the Raspberry Pi preview socket...';
+    });
+
+    try {
+      final socket = await Socket.connect(
+        raspberryPiIp,
+        widget.port,
+        timeout: const Duration(seconds: 3),
+      );
+      socket.setOption(SocketOption.tcpNoDelay, true);
+      socket.add(utf8.encode('POSETRACK_PREVIEW 1\n'));
+      await socket.flush();
+
+      _socket = socket;
+      _socketSubscription = socket.listen(
+        _handleSocketData,
+        onDone: _handleSocketDisconnected,
+        onError: _handleSocketError,
+        cancelOnError: true,
+      );
+
+      if (mounted) {
+        setState(() {
+          _isConnecting = false;
+          _statusMessage = 'Connected to the Pi preview socket. Waiting for the first frame...';
+        });
+      }
+    } on SocketException catch (error) {
+      _handlePreviewFailure(
+        'Preview socket unavailable: ${error.message}. The app will retry automatically.',
+      );
+    } on TimeoutException {
+      _handlePreviewFailure(
+        'Preview socket timed out. The app will keep retrying until the Pi stream is ready.',
+      );
+    }
+  }
+
+  void _handleSocketData(Uint8List data) {
+    _buffer.addAll(data);
+
+    while (true) {
+      if (!_handshakeComplete) {
+        final newlineIndex = _buffer.indexOf(10);
+        if (newlineIndex == -1) {
+          return;
+        }
+
+        final line = utf8.decode(_buffer.sublist(0, newlineIndex)).trim();
+        _buffer.removeRange(0, newlineIndex + 1);
+
+        if (line != 'POSETRACK_PREVIEW_OK') {
+          _handlePreviewFailure('Unexpected preview handshake response: $line');
+          return;
+        }
+
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          _handshakeComplete = true;
+          _statusMessage = 'Preview socket connected. Waiting for the first camera frame...';
+        });
+      }
+
+      if (_buffer.length < 4) {
+        return;
+      }
+
+      final length = (_buffer[0] << 24) |
+          (_buffer[1] << 16) |
+          (_buffer[2] << 8) |
+          _buffer[3];
+
+      if (_buffer.length < 4 + length) {
+        return;
+      }
+
+      final frameBytes = Uint8List.fromList(_buffer.sublist(4, 4 + length));
+      _buffer.removeRange(0, 4 + length);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _frameBytes = frameBytes;
+        _statusMessage = null;
+      });
+    }
+  }
+
+  void _handleSocketDisconnected() {
+    _handlePreviewFailure('Preview socket disconnected. Reconnecting to the Raspberry Pi...');
+  }
+
+  void _handleSocketError(Object error) {
+    _handlePreviewFailure('Preview socket error: $error');
+  }
+
+  void _handlePreviewFailure(String message) {
+    _socketSubscription?.cancel();
+    _socketSubscription = null;
+    _closeSocket();
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isConnecting = false;
+      _handshakeComplete = false;
+      _statusMessage = message;
+    });
+
+    _scheduleReconnect();
+  }
+
+  void _scheduleReconnect() {
+    if (_reconnectTimer != null) {
+      return;
+    }
+
+    _reconnectTimer = Timer(const Duration(seconds: 1), () {
+      _reconnectTimer = null;
+      _connectIfPossible();
+    });
+  }
+
+  void _resetConnection() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _socketSubscription?.cancel();
+    _socketSubscription = null;
+    _closeSocket();
+    _buffer.clear();
+    _frameBytes = null;
+    _isConnecting = false;
+    _handshakeComplete = false;
+  }
+
+  void _closeSocket() {
+    final socket = _socket;
+    _socket = null;
+    if (socket == null) {
+      return;
+    }
+
+    try {
+      socket.destroy();
+    } catch (_) {
+      // Ignore socket shutdown errors during reconnect/dispose.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final raspberryPiIp = widget.raspberryPiIp?.trim();
+    if (raspberryPiIp == null || raspberryPiIp.isEmpty) {
+      return const _PreviewPlaceholder(
+        icon: Icons.videocam_off_rounded,
+        title: 'Preview unavailable',
+        message:
+            'Set the Raspberry Pi IP in Settings so the app can open the live preview socket.',
+      );
+    }
+
+    if (_frameBytes != null) {
+      return Image.memory(
+        _frameBytes!,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.low,
+      );
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _PreviewPlaceholder(
+          icon: _isConnecting ? Icons.wifi_tethering_rounded : Icons.wifi_find_rounded,
+          title: _isConnecting ? 'Connecting to Pi preview' : 'Waiting for Pi preview',
+          message: _statusMessage ??
+              'The Raspberry Pi preview socket has not delivered the first frame yet.',
+        ),
+        if (_isConnecting)
+          const Center(
+            child: SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(strokeWidth: 2.4),
+            ),
+          ),
+      ],
     );
   }
 }

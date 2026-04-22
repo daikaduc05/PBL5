@@ -1,0 +1,17 @@
+{
+  "session_id": "sess_000012",
+  "frame_id": "1",
+  "device_id": 2,
+  "filename": "camera_photo.jpg",
+  "timestamp": 1776858515.477405,
+  "message_type": "capture_photo",
+  "input_path": "D:\\TaiLieuNam3_DUT\\HKII\\PBL5\\PBL5\\backend\\workers\\output\\sess_000012\\frame_1.jpg",
+  "pose_output_path": "D:\\TaiLieuNam3_DUT\\HKII\\PBL5\\PBL5\\backend\\workers\\results\\sess_000012\\frame_1_pose.jpg",
+  "success": true,
+  "num_detections": 2,
+  "inference_result": {
+    "success": true,
+    "num_detections": 2,
+    "output_path": "D:\\TaiLieuNam3_DUT\\HKII\\PBL5\\PBL5\\backend\\workers\\results\\sess_000012\\frame_1_pose.jpg"
+  }
+}

@@ -29,6 +29,7 @@ DEFAULT_CAMERA_FPS = float(os.getenv("POSETRACK_CAMERA_FPS", "10"))
 DEFAULT_CAMERA_WARMUP_SECONDS = float(os.getenv("POSETRACK_CAMERA_WARMUP", "1.0"))
 DEFAULT_PREVIEW_HOST = os.getenv("POSETRACK_PREVIEW_HOST", "0.0.0.0")
 DEFAULT_PREVIEW_PORT = int(os.getenv("POSETRACK_PREVIEW_PORT", "8081"))
+DEFAULT_PREVIEW_SOCKET_PORT = int(os.getenv("POSETRACK_PREVIEW_SOCKET_PORT", "8082"))
 DEFAULT_IDLE_PREVIEW_FPS = float(os.getenv("POSETRACK_IDLE_PREVIEW_FPS", "4"))
 
 
@@ -493,6 +494,12 @@ def main() -> None:
         help="Port for the Pi live preview server, or 0 to disable (default: %(default)s)",
     )
     parser.add_argument(
+        "--preview-socket-port",
+        type=int,
+        default=DEFAULT_PREVIEW_SOCKET_PORT,
+        help="Persistent preview socket port for app streaming (default: %(default)s)",
+    )
+    parser.add_argument(
         "--device-id",
         type=int,
         default=int(os.getenv("POSETRACK_DEVICE_ID", "0")) or None,
@@ -507,6 +514,7 @@ def main() -> None:
         preview_server = start_preview_server(
             host=args.preview_host,
             port=args.preview_port,
+            socket_port=args.preview_socket_port,
             logger=log,
         )
 

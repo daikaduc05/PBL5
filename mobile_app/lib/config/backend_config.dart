@@ -26,6 +26,11 @@ class BackendConfig {
     defaultValue: 8081,
   );
 
+  static const int defaultPiPreviewSocketPort = int.fromEnvironment(
+    'POSETRACK_PREVIEW_SOCKET_PORT',
+    defaultValue: 8082,
+  );
+
   static const int defaultZmqPort = int.fromEnvironment(
     'POSETRACK_ZMQ_PORT',
     defaultValue: 5555,

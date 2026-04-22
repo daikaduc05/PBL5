@@ -68,6 +68,7 @@ from the Pi agent:
 
 ```text
 Capture screen -> http://<pi-ip>:8081/preview/latest.jpg
+Capture screen -> tcp://<pi-ip>:8082 (persistent preview socket)
 ```
 
 This preview is served directly by the Pi agent and is separate from the

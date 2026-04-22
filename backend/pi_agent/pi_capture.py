@@ -7,6 +7,8 @@ from typing import Callable
 
 import zmq
 
+from pi_preview import update_preview_frame
+
 
 LogFn = Callable[[str], None]
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png")
@@ -378,6 +380,60 @@ def _import_picamera2():
     return Picamera2
 
 
+def _open_picamera2_camera(
+    camera_index: int,
+    *,
+    logger: LogFn | None = None,
+    purpose: str,
+    retries: int = 6,
+    retry_delay_seconds: float = 0.4,
+):
+    Picamera2 = _import_picamera2()
+    last_error: Exception | None = None
+
+    for attempt in range(1, retries + 1):
+        for factory in _picamera2_factories(Picamera2, camera_index):
+            try:
+                return factory()
+            except Exception as exc:  # pragma: no cover - depends on Pi runtime
+                last_error = exc
+
+        if attempt < retries:
+            _log(
+                logger,
+                f"Picamera2 open attempt {attempt}/{retries} for {purpose} failed: {last_error}",
+            )
+            time.sleep(retry_delay_seconds)
+
+    inventory = _describe_picamera2_inventory(Picamera2)
+    raise RuntimeError(
+        f"Unable to open Picamera2 camera index {camera_index} for {purpose}: {last_error}. "
+        f"{inventory}"
+    )
+
+
+def _picamera2_factories(Picamera2, camera_index: int):
+    if camera_index == 0:
+        return (
+            lambda: Picamera2(),
+            lambda: Picamera2(camera_num=0),
+        )
+
+    return (lambda: Picamera2(camera_num=camera_index),)
+
+
+def _describe_picamera2_inventory(Picamera2) -> str:
+    try:
+        camera_info = Picamera2.global_camera_info()
+    except Exception as exc:  # pragma: no cover - depends on Pi runtime
+        return f"Picamera2 camera inventory unavailable: {exc}"
+
+    if not camera_info:
+        return "Picamera2 reported no cameras."
+
+    return f"Picamera2 camera inventory: {camera_info}"
+
+
 def _open_opencv_camera(
     cv2,
     camera_index: int,
@@ -412,12 +468,15 @@ def _capture_photo_with_picamera2_to_zmq(
     logger: LogFn | None,
 ) -> int:
     cv2 = _import_cv2()
-    Picamera2 = _import_picamera2()
     socket, context = _open_push_socket(host, port)
     picamera2 = None
 
     try:
-        picamera2 = Picamera2(camera_num=camera_index)
+        picamera2 = _open_picamera2_camera(
+            camera_index,
+            logger=logger,
+            purpose="still capture",
+        )
         configuration = picamera2.create_still_configuration(
             main={
                 "size": _resolve_picamera_size(width, height, default=(1296, 972)),
@@ -470,7 +529,6 @@ def _capture_video_with_picamera2_to_zmq(
     logger: LogFn | None,
 ) -> int:
     cv2 = _import_cv2()
-    Picamera2 = _import_picamera2()
     socket, context = _open_push_socket(host, port)
     picamera2 = None
     frame_interval_seconds = 1.0 / max(fps, 1.0)
@@ -478,7 +536,11 @@ def _capture_video_with_picamera2_to_zmq(
     frame_id = 0
 
     try:
-        picamera2 = Picamera2(camera_num=camera_index)
+        picamera2 = _open_picamera2_camera(
+            camera_index,
+            logger=logger,
+            purpose="video capture",
+        )
         frame_duration = int(1_000_000 / max(fps, 1.0))
         configuration = picamera2.create_video_configuration(
             main={
@@ -545,12 +607,15 @@ def _stream_idle_preview_with_picamera2(
     logger: LogFn | None,
 ) -> None:
     cv2 = _import_cv2()
-    Picamera2 = _import_picamera2()
     picamera2 = None
     frame_interval_seconds = 1.0 / max(fps, 1.0)
 
     try:
-        picamera2 = Picamera2(camera_num=camera_index)
+        picamera2 = _open_picamera2_camera(
+            camera_index,
+            logger=logger,
+            purpose="idle preview",
+        )
         frame_duration = int(1_000_000 / max(fps, 1.0))
         configuration = picamera2.create_preview_configuration(
             main={
