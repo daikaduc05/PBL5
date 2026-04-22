@@ -48,24 +48,21 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
   String? _raspberryPiIp;
   CaptureSessionDraft? _activeRecordingDraft;
   Timer? _timer;
-  Timer? _previewRefreshTimer;
   Timer? _liveInferenceTimer;
-  int _previewRefreshTick = 0;
   ResultSessionDetail? _liveResultSession;
   ResultFrameItem? _latestInferenceFrame;
+  FrameResultDetail? _latestInferenceDetail;
   String? _liveInferenceMessage;
 
   @override
   void initState() {
     super.initState();
-    _startPreviewRefreshLoop();
     _loadConfiguration();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
-    _previewRefreshTimer?.cancel();
     _liveInferenceTimer?.cancel();
     super.dispose();
   }
@@ -188,27 +185,10 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
     });
   }
 
-  void _startPreviewRefreshLoop() {
-    _previewRefreshTimer?.cancel();
-    _previewRefreshTimer = Timer.periodic(
-      const Duration(milliseconds: 350),
-      (timer) {
-        if (!mounted) {
-          timer.cancel();
-          return;
-        }
-
-        setState(() {
-          _previewRefreshTick += 1;
-        });
-      },
-    );
-  }
-
   void _startInferencePolling(CaptureSessionDraft draft) {
     _liveInferenceTimer?.cancel();
     _pollLiveInference(draft);
-    _liveInferenceTimer = Timer.periodic(const Duration(milliseconds: 900), (timer) {
+    _liveInferenceTimer = Timer.periodic(const Duration(milliseconds: 450), (timer) {
       _pollLiveInference(draft);
     });
   }
@@ -227,14 +207,40 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
 
       final latestFrameId = session.latestResultFrameId ?? session.latestFrameId;
       final latestFrame = latestFrameId == null ? null : session.findFrame(latestFrameId);
+      FrameResultDetail? latestDetail = _latestInferenceDetail;
+
+      if (latestFrame?.hasResultJson == true) {
+        final shouldRefreshDetail = latestDetail == null ||
+            latestDetail.sessionId != draft.sessionId ||
+            latestDetail.frameId != latestFrame!.frameId;
+
+        if (shouldRefreshDetail) {
+          try {
+            latestDetail = await _resultApi.getFrameResult(
+              draft.sessionId,
+              latestFrame!.frameId,
+            );
+            if (!mounted) {
+              return;
+            }
+          } on ResultApiException {
+            latestDetail = null;
+          }
+        }
+      } else {
+        latestDetail = null;
+      }
 
       setState(() {
         _liveResultSession = session;
         _latestInferenceFrame = latestFrame?.hasPoseImage == true ? latestFrame : null;
+        _latestInferenceDetail = latestDetail;
         _liveInferenceMessage = latestFrame == null
             ? 'Frames are still reaching the worker.'
+            : latestDetail?.poseOverlay?.hasDetections == true
+            ? 'Frame ${latestFrame.frameId}: ${latestDetail!.poseOverlay!.detections.length} pose detection(s) live.'
             : latestFrame.hasResultJson
-            ? 'Latest inference frame ${latestFrame.frameId} is ready.'
+            ? 'Frame ${latestFrame.frameId} is ready, but no pose was detected.'
             : 'Latest frame ${latestFrame.frameId} reached the backend. Waiting for JSON.';
       });
     } on ResultApiException catch (error) {
@@ -246,6 +252,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
         setState(() {
           _liveResultSession = null;
           _latestInferenceFrame = null;
+          _latestInferenceDetail = null;
           _liveInferenceMessage = 'Waiting for the first processed frame...';
         });
         return;
@@ -288,6 +295,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
         _elapsed = Duration.zero;
         _liveResultSession = null;
         _latestInferenceFrame = null;
+        _latestInferenceDetail = null;
         _liveInferenceMessage = 'Waiting for the worker to produce the first inference frame...';
       });
       _startRecordingTimer();
@@ -364,6 +372,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
       setState(() {
         _isRecording = false;
         _activeRecordingDraft = null;
+        _latestInferenceDetail = null;
       });
 
       if (!autoTriggered) {
@@ -609,7 +618,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
 
   Widget _buildCapturePreviewContent() {
     final raspberryPiIp = _raspberryPiIp?.trim();
-    final latestPoseImageUrl = _isRecording ? _latestInferenceFrame?.poseImageUrl : null;
+    final livePoseDetail = _isRecording ? _latestInferenceDetail : null;
 
     return Stack(
       fit: StackFit.expand,
@@ -631,11 +640,10 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
             ),
           ),
         ),
-        if (latestPoseImageUrl != null)
+        if (livePoseDetail?.poseOverlay?.hasDetections == true)
           Positioned.fill(
-            child: _LivePoseOverlay(
-              imageUrl: latestPoseImageUrl,
-              refreshTick: _previewRefreshTick,
+            child: _LivePoseMetadataOverlay(
+              detail: livePoseDetail!,
             ),
           ),
         if (_isRecording)
@@ -644,9 +652,9 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
             bottom: 110,
             child: _InferenceOverlay(
               frame: _latestInferenceFrame,
+              detail: _latestInferenceDetail,
               message: _liveInferenceMessage,
               session: _liveResultSession,
-              refreshTick: _previewRefreshTick,
             ),
           ),
       ],
@@ -1368,33 +1376,26 @@ class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
   }
 }
 
-class _LivePoseOverlay extends StatelessWidget {
-  final String imageUrl;
-  final int refreshTick;
+class _LivePoseMetadataOverlay extends StatelessWidget {
+  final FrameResultDetail detail;
 
-  const _LivePoseOverlay({
-    required this.imageUrl,
-    required this.refreshTick,
+  const _LivePoseMetadataOverlay({
+    required this.detail,
   });
 
   @override
   Widget build(BuildContext context) {
+    final overlay = detail.poseOverlay;
+    if (overlay == null || !overlay.hasDetections) {
+      return const SizedBox.shrink();
+    }
+
     return IgnorePointer(
       child: Stack(
         fit: StackFit.expand,
         children: [
-          AnimatedOpacity(
-            opacity: 0.94,
-            duration: const Duration(milliseconds: 220),
-            child: Image.network(
-              '$imageUrl?tick=$refreshTick',
-              fit: BoxFit.cover,
-              gaplessPlayback: true,
-              filterQuality: FilterQuality.low,
-              errorBuilder: (context, error, stackTrace) {
-                return const SizedBox.shrink();
-              },
-            ),
+          CustomPaint(
+            painter: _LivePosePainter(overlay: overlay),
           ),
           Positioned(
             top: 56,
@@ -1439,25 +1440,26 @@ class _LivePoseOverlay extends StatelessWidget {
 
 class _InferenceOverlay extends StatelessWidget {
   final ResultFrameItem? frame;
+  final FrameResultDetail? detail;
   final ResultSessionDetail? session;
   final String? message;
-  final int refreshTick;
 
   const _InferenceOverlay({
     required this.frame,
+    required this.detail,
     required this.session,
     required this.message,
-    required this.refreshTick,
   });
 
   @override
   Widget build(BuildContext context) {
-    final imageUrl = frame?.poseImageUrl;
     final chipLabel = frame == null ? 'AI waiting' : 'Inference F${frame!.frameId}';
+    final overlay = detail?.poseOverlay;
+    final firstDetection = overlay?.detections.isNotEmpty == true ? overlay!.detections.first : null;
     final bodyMessage = message ??
         (frame == null
             ? 'Waiting for the worker to produce the first processed frame.'
-            : 'The latest processed pose frame is shown here.');
+            : 'The frontend is now rendering pose metadata directly on top of the Pi preview.');
 
     return Container(
       width: 150,
@@ -1508,30 +1510,25 @@ class _InferenceOverlay extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(14),
-            child: AspectRatio(
-              aspectRatio: 3 / 4,
-              child: imageUrl == null
-                  ? DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: AppColors.surface,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: const Center(
-                        child: Icon(
-                          Icons.auto_graph_rounded,
-                          color: AppColors.textMuted,
-                          size: 24,
-                        ),
-                      ),
-                    )
-                  : Image.network(
-                      '$imageUrl?tick=$refreshTick',
-                      fit: BoxFit.cover,
-                      gaplessPlayback: true,
-                    ),
-            ),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _MiniMetricChip(
+                label: 'Det',
+                value: '${overlay?.detections.length ?? 0}',
+              ),
+              if (firstDetection != null && firstDetection.angles['knee'] != null)
+                _MiniMetricChip(
+                  label: 'Knee',
+                  value: firstDetection.angles['knee']!.toStringAsFixed(0),
+                ),
+              if (firstDetection != null && firstDetection.angles['hip'] != null)
+                _MiniMetricChip(
+                  label: 'Hip',
+                  value: firstDetection.angles['hip']!.toStringAsFixed(0),
+                ),
+            ],
           ),
           const SizedBox(height: 8),
           Text(
@@ -1547,5 +1544,179 @@ class _InferenceOverlay extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _MiniMetricChip extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _MiniMetricChip({
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: AppColors.primary.withValues(alpha: 0.18),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        child: Text(
+          '$label $value',
+          style: AppTypography.bodyMedium.copyWith(
+            color: AppColors.textPrimary,
+            fontSize: 10.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LivePosePainter extends CustomPainter {
+  final PoseOverlayData overlay;
+
+  const _LivePosePainter({
+    required this.overlay,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final linePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round
+      ..color = AppColors.success.withValues(alpha: 0.92);
+
+    final pointPaint = Paint()
+      ..style = PaintingStyle.fill
+      ..color = AppColors.primary.withValues(alpha: 0.96);
+
+    final bboxPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..color = Colors.white.withValues(alpha: 0.35);
+
+    for (final detection in overlay.detections) {
+      final points = detection.normalizedKeypoints;
+      if (points.isEmpty) {
+        continue;
+      }
+
+      final bbox = detection.bboxNormalized;
+      if (bbox != null) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTRB(
+              bbox.x1 * size.width,
+              bbox.y1 * size.height,
+              bbox.x2 * size.width,
+              bbox.y2 * size.height,
+            ),
+            const Radius.circular(12),
+          ),
+          bboxPaint,
+        );
+      }
+
+      for (final edge in overlay.skeletonEdges) {
+        final startIndex = edge[0];
+        final endIndex = edge[1];
+        if (startIndex >= points.length || endIndex >= points.length) {
+          continue;
+        }
+
+        final start = Offset(
+          points[startIndex].x * size.width,
+          points[startIndex].y * size.height,
+        );
+        final end = Offset(
+          points[endIndex].x * size.width,
+          points[endIndex].y * size.height,
+        );
+        canvas.drawLine(start, end, linePaint);
+      }
+
+      for (final point in points) {
+        canvas.drawCircle(
+          Offset(point.x * size.width, point.y * size.height),
+          4.2,
+          pointPaint,
+        );
+      }
+
+      _paintAngleText(
+        canvas,
+        size,
+        points,
+        'K ${detection.angles['knee']?.toStringAsFixed(0) ?? '-'}',
+        index: 14,
+      );
+      _paintAngleText(
+        canvas,
+        size,
+        points,
+        'H ${detection.angles['hip']?.toStringAsFixed(0) ?? '-'}',
+        index: 12,
+      );
+    }
+  }
+
+  void _paintAngleText(
+    Canvas canvas,
+    Size size,
+    List<PosePoint> points,
+    String text, {
+    required int index,
+  }) {
+    if (index >= points.length) {
+      return;
+    }
+
+    final point = points[index];
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: AppTypography.bodyMedium.copyWith(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    final offset = Offset(
+      (point.x * size.width).clamp(0.0, size.width - textPainter.width),
+      (point.y * size.height - 20).clamp(0.0, size.height - textPainter.height),
+    );
+
+    final background = RRect.fromRectAndRadius(
+      Rect.fromLTWH(
+        offset.dx - 4,
+        offset.dy - 2,
+        textPainter.width + 8,
+        textPainter.height + 4,
+      ),
+      const Radius.circular(8),
+    );
+    canvas.drawRRect(
+      background,
+      Paint()..color = Colors.black.withValues(alpha: 0.42),
+    );
+    textPainter.paint(canvas, offset);
+  }
+
+  @override
+  bool shouldRepaint(covariant _LivePosePainter oldDelegate) {
+    return oldDelegate.overlay != overlay;
   }
 }

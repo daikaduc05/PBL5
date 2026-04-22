@@ -534,6 +534,25 @@ KP_L_KNEE = 13
 KP_R_ANKLE = 16
 KP_L_ANKLE = 15
 
+COCO_SKELETON_EDGES: list[tuple[int, int]] = [
+    (0, 1),
+    (0, 2),
+    (1, 3),
+    (2, 4),
+    (5, 6),
+    (5, 7),
+    (7, 9),
+    (6, 8),
+    (8, 10),
+    (5, 11),
+    (6, 12),
+    (11, 12),
+    (11, 13),
+    (13, 15),
+    (12, 14),
+    (14, 16),
+]
+
 
 def calculate_angle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
     a = np.asarray(a, dtype=np.float32)
@@ -594,25 +613,6 @@ def visualize_pose(
     results: list[dict[str, Any]],
     save_path: str | Path | None = None,
 ) -> np.ndarray:
-    skeleton = [
-        (0, 1),
-        (0, 2),
-        (1, 3),
-        (2, 4),
-        (5, 6),
-        (5, 7),
-        (7, 9),
-        (6, 8),
-        (8, 10),
-        (5, 11),
-        (6, 12),
-        (11, 12),
-        (11, 13),
-        (13, 15),
-        (12, 14),
-        (14, 16),
-    ]
-
     colors = [
         (255, 0, 0),
         (0, 255, 0),
@@ -628,7 +628,7 @@ def visualize_pose(
         keypoints = result["keypoints"]
         color = colors[index % len(colors)]
 
-        for joint_start, joint_end in skeleton:
+        for joint_start, joint_end in COCO_SKELETON_EDGES:
             pt1 = tuple(keypoints[joint_start].astype(int))
             pt2 = tuple(keypoints[joint_end].astype(int))
             cv2.line(canvas, pt1, pt2, color, 2)
@@ -665,6 +665,57 @@ def visualize_pose(
         save_image(canvas, save_path)
 
     return canvas
+
+
+def serialize_pose_results(
+    results: list[dict[str, Any]],
+    image_width: int,
+    image_height: int,
+) -> list[dict[str, Any]]:
+    width = max(int(image_width), 1)
+    height = max(int(image_height), 1)
+    serialized: list[dict[str, Any]] = []
+
+    for result in results:
+        raw_bbox = result.get("bbox", [0, 0, 0, 0, 0])
+        x1, y1, x2, y2, score = raw_bbox
+        keypoints = np.asarray(result.get("keypoints", []), dtype=np.float32)
+        angles = result.get("angles") or {}
+
+        serialized.append(
+            {
+                "bbox": {
+                    "x1": round(float(x1), 3),
+                    "y1": round(float(y1), 3),
+                    "x2": round(float(x2), 3),
+                    "y2": round(float(y2), 3),
+                    "score": round(float(score), 4),
+                },
+                "bbox_normalized": {
+                    "x1": round(float(x1) / width, 6),
+                    "y1": round(float(y1) / height, 6),
+                    "x2": round(float(x2) / width, 6),
+                    "y2": round(float(y2) / height, 6),
+                },
+                "keypoints": [
+                    [round(float(point[0]), 3), round(float(point[1]), 3)]
+                    for point in keypoints
+                ],
+                "keypoints_normalized": [
+                    [
+                        round(float(point[0]) / width, 6),
+                        round(float(point[1]) / height, 6),
+                    ]
+                    for point in keypoints
+                ],
+                "angles": {
+                    key: round(float(value), 3)
+                    for key, value in angles.items()
+                },
+            }
+        )
+
+    return serialized
 
 
 def predict_pose_for_crops(
@@ -714,6 +765,16 @@ def _run_pose_pipeline(
         "success": True,
         "num_detections": len(results),
         "output_path": resolved_output_path,
+        "image_size": {
+            "width": int(pose_input.image.shape[1]),
+            "height": int(pose_input.image.shape[0]),
+        },
+        "skeleton_edges": [list(edge) for edge in COCO_SKELETON_EDGES],
+        "detections": serialize_pose_results(
+            results,
+            image_width=int(pose_input.image.shape[1]),
+            image_height=int(pose_input.image.shape[0]),
+        ),
     }
     return response, visualized_image, results
 
