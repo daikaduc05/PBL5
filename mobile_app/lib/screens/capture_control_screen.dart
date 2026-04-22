@@ -1050,6 +1050,7 @@ class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
   bool _isConnecting = false;
   bool _handshakeComplete = false;
   String? _statusMessage;
+  int _reconnectAttempt = 0;
 
   @override
   void initState() {
@@ -1105,9 +1106,10 @@ class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
       final socket = await Socket.connect(
         raspberryPiIp,
         widget.port,
-        timeout: const Duration(seconds: 3),
+        timeout: const Duration(seconds: 2),
       );
       socket.setOption(SocketOption.tcpNoDelay, true);
+      unawaited(socket.done.catchError((Object _) {}));
       socket.add(utf8.encode('POSETRACK_PREVIEW 1\n'));
       await socket.flush();
 
@@ -1122,16 +1124,21 @@ class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
       if (mounted) {
         setState(() {
           _isConnecting = false;
+          _reconnectAttempt = 0;
           _statusMessage = 'Connected to the Pi preview socket. Waiting for the first frame...';
         });
       }
-    } on SocketException catch (error) {
+    } on SocketException {
       _handlePreviewFailure(
-        'Preview socket unavailable: ${error.message}. The app will retry automatically.',
+        _frameBytes == null
+            ? 'Preview socket unavailable.'
+            : 'Preview link interrupted.',
       );
     } on TimeoutException {
       _handlePreviewFailure(
-        'Preview socket timed out. The app will keep retrying until the Pi stream is ready.',
+        _frameBytes == null
+            ? 'Preview socket timed out before the first frame arrived.'
+            : 'Preview stream timed out.',
       );
     }
   }
@@ -1186,6 +1193,7 @@ class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
 
       setState(() {
         _frameBytes = frameBytes;
+        _reconnectAttempt = 0;
         _statusMessage = null;
       });
     }
@@ -1196,7 +1204,7 @@ class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
   }
 
   void _handleSocketError(Object error) {
-    _handlePreviewFailure('Preview socket error: $error');
+    _handlePreviewFailure('Preview socket error.');
   }
 
   void _handlePreviewFailure(String message) {
@@ -1208,21 +1216,39 @@ class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
       return;
     }
 
+    final reconnectDelay = _nextReconnectDelay();
     setState(() {
       _isConnecting = false;
       _handshakeComplete = false;
-      _statusMessage = message;
+      _statusMessage = '$message Reconnecting in ${reconnectDelay.inSeconds}s...';
     });
 
-    _scheduleReconnect();
+    _scheduleReconnect(reconnectDelay);
   }
 
-  void _scheduleReconnect() {
+  Duration _nextReconnectDelay() {
+    _reconnectAttempt += 1;
+    if (_reconnectAttempt <= 1) {
+      return const Duration(seconds: 1);
+    }
+    if (_reconnectAttempt == 2) {
+      return const Duration(seconds: 2);
+    }
+    if (_reconnectAttempt == 3) {
+      return const Duration(seconds: 4);
+    }
+    if (_reconnectAttempt == 4) {
+      return const Duration(seconds: 8);
+    }
+    return const Duration(seconds: 12);
+  }
+
+  void _scheduleReconnect(Duration delay) {
     if (_reconnectTimer != null) {
       return;
     }
 
-    _reconnectTimer = Timer(const Duration(seconds: 1), () {
+    _reconnectTimer = Timer(delay, () {
       _reconnectTimer = null;
       _connectIfPossible();
     });
@@ -1238,6 +1264,8 @@ class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
     _frameBytes = null;
     _isConnecting = false;
     _handshakeComplete = false;
+    _reconnectAttempt = 0;
+    _statusMessage = null;
   }
 
   void _closeSocket() {
@@ -1267,11 +1295,54 @@ class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
     }
 
     if (_frameBytes != null) {
-      return Image.memory(
-        _frameBytes!,
-        fit: BoxFit.cover,
-        gaplessPlayback: true,
-        filterQuality: FilterQuality.low,
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.memory(
+            _frameBytes!,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            filterQuality: FilterQuality.low,
+          ),
+          if (_statusMessage != null)
+            Positioned(
+              left: 14,
+              right: 14,
+              bottom: 16,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: AppColors.background.withValues(alpha: 0.76),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: AppColors.primary.withValues(alpha: 0.24),
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _isConnecting ? Icons.sync_rounded : Icons.wifi_tethering_error_rounded,
+                        color: AppColors.primary,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _statusMessage!,
+                          style: AppTypography.bodyMedium.copyWith(
+                            color: AppColors.textPrimary,
+                            fontSize: 12,
+                            height: 1.2,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
       );
     }
 

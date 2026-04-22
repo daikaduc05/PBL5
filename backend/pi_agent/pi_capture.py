@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Callable
@@ -12,6 +13,10 @@ from pi_preview import update_preview_frame
 
 LogFn = Callable[[str], None]
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png")
+DEFAULT_PREVIEW_MAX_WIDTH = int(os.getenv("POSETRACK_PREVIEW_MAX_WIDTH", "480"))
+DEFAULT_PREVIEW_MAX_HEIGHT = int(os.getenv("POSETRACK_PREVIEW_MAX_HEIGHT", "360"))
+DEFAULT_PREVIEW_JPEG_QUALITY = int(os.getenv("POSETRACK_PREVIEW_JPEG_QUALITY", "55"))
+DEFAULT_PREVIEW_STREAM_FPS = float(os.getenv("POSETRACK_PREVIEW_STREAM_FPS", "3"))
 
 
 def has_replay_frames(frames_dir: str | None) -> bool:
@@ -134,6 +139,7 @@ def capture_photo_to_zmq(
             raise RuntimeError("Camera did not return a frame for capture_photo.")
 
         frame_bytes = _encode_frame_to_jpeg(cv2, frame)
+        _publish_preview_frame(cv2, frame)
         _send_frame_bytes(
             socket=socket,
             session_id=session_id,
@@ -200,6 +206,7 @@ def capture_video_to_zmq(
     deadline = time.monotonic() + max(duration_seconds, 1.0)
     frame_id = 0
     read_failures = 0
+    preview_sent_at: float | None = None
 
     try:
         _warm_up_camera(camera, warmup_seconds)
@@ -226,6 +233,12 @@ def capture_video_to_zmq(
             read_failures = 0
             frame_id += 1
             frame_bytes = _encode_frame_to_jpeg(cv2, frame)
+            preview_sent_at = _publish_preview_frame(
+                cv2,
+                frame,
+                last_sent_at=preview_sent_at,
+                max_fps=DEFAULT_PREVIEW_STREAM_FPS,
+            )
             _send_frame_bytes(
                 socket=socket,
                 session_id=session_id,
@@ -298,7 +311,7 @@ def stream_idle_preview(
             loop_started_at = time.monotonic()
             success, frame = camera.read()
             if success and frame is not None:
-                update_preview_frame(frame_bytes=_encode_frame_to_jpeg(cv2, frame))
+                _publish_preview_frame(cv2, frame)
 
             remaining_sleep = frame_interval_seconds - (time.monotonic() - loop_started_at)
             if remaining_sleep > 0:
@@ -494,6 +507,7 @@ def _capture_photo_with_picamera2_to_zmq(
             raise RuntimeError("Picamera2 returned an empty frame for capture_photo.")
 
         frame_bytes = _encode_frame_to_jpeg(cv2, frame)
+        _publish_preview_frame(cv2, frame)
         _send_frame_bytes(
             socket=socket,
             session_id=session_id,
@@ -534,6 +548,7 @@ def _capture_video_with_picamera2_to_zmq(
     frame_interval_seconds = 1.0 / max(fps, 1.0)
     deadline = time.monotonic() + max(duration_seconds, 1.0)
     frame_id = 0
+    preview_sent_at: float | None = None
 
     try:
         picamera2 = _open_picamera2_camera(
@@ -566,6 +581,12 @@ def _capture_video_with_picamera2_to_zmq(
 
             frame_id += 1
             frame_bytes = _encode_frame_to_jpeg(cv2, frame)
+            preview_sent_at = _publish_preview_frame(
+                cv2,
+                frame,
+                last_sent_at=preview_sent_at,
+                max_fps=DEFAULT_PREVIEW_STREAM_FPS,
+            )
             _send_frame_bytes(
                 socket=socket,
                 session_id=session_id,
@@ -619,7 +640,7 @@ def _stream_idle_preview_with_picamera2(
         frame_duration = int(1_000_000 / max(fps, 1.0))
         configuration = picamera2.create_preview_configuration(
             main={
-                "size": _resolve_picamera_size(width, height, default=(960, 720)),
+                "size": _resolve_picamera_size(width, height, default=(640, 480)),
                 "format": "RGB888",
             },
             controls={"FrameDurationLimits": (frame_duration, frame_duration)},
@@ -634,7 +655,7 @@ def _stream_idle_preview_with_picamera2(
             loop_started_at = time.monotonic()
             frame = _normalize_frame_for_jpeg(cv2, picamera2.capture_array("main"))
             if frame is not None:
-                update_preview_frame(frame_bytes=_encode_frame_to_jpeg(cv2, frame))
+                _publish_preview_frame(cv2, frame)
 
             remaining_sleep = frame_interval_seconds - (time.monotonic() - loop_started_at)
             if remaining_sleep > 0:
@@ -694,8 +715,58 @@ def _warm_up_camera(camera, warmup_seconds: float) -> None:
         time.sleep(0.05)
 
 
-def _encode_frame_to_jpeg(cv2, frame) -> bytes:
-    success, encoded_frame = cv2.imencode(".jpg", frame)
+def _publish_preview_frame(
+    cv2,
+    frame,
+    *,
+    last_sent_at: float | None = None,
+    max_fps: float | None = None,
+) -> float:
+    now = time.monotonic()
+    if max_fps is not None and max_fps > 0 and last_sent_at is not None:
+        minimum_interval_seconds = 1.0 / max(max_fps, 0.1)
+        if now - last_sent_at < minimum_interval_seconds:
+            return last_sent_at
+
+    update_preview_frame(frame_bytes=_encode_preview_frame_to_jpeg(cv2, frame))
+    return now
+
+
+def _encode_preview_frame_to_jpeg(cv2, frame) -> bytes:
+    preview_frame = frame
+    if frame is None:
+        raise RuntimeError("Cannot encode an empty preview frame.")
+
+    frame_height, frame_width = frame.shape[:2]
+    scale = min(
+        DEFAULT_PREVIEW_MAX_WIDTH / max(frame_width, 1),
+        DEFAULT_PREVIEW_MAX_HEIGHT / max(frame_height, 1),
+        1.0,
+    )
+
+    if scale < 1.0:
+        preview_frame = cv2.resize(
+            frame,
+            (
+                max(1, int(frame_width * scale)),
+                max(1, int(frame_height * scale)),
+            ),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    return _encode_frame_to_jpeg(
+        cv2,
+        preview_frame,
+        quality=DEFAULT_PREVIEW_JPEG_QUALITY,
+    )
+
+
+def _encode_frame_to_jpeg(cv2, frame, quality: int | None = None) -> bytes:
+    params = []
+    if quality is not None:
+        params = [int(cv2.IMWRITE_JPEG_QUALITY), max(30, min(int(quality), 95))]
+
+    success, encoded_frame = cv2.imencode(".jpg", frame, params)
     if not success:
         raise RuntimeError("Failed to encode captured frame to JPEG.")
     return encoded_frame.tobytes()

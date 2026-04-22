@@ -170,6 +170,7 @@ class PreviewSocketServer:
         self._logger = logger
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._set_socket_option(self._server_socket, socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         self._server_socket.bind((host, port))
         self._server_socket.listen()
         self._server_socket.settimeout(1.0)
@@ -210,6 +211,8 @@ class PreviewSocketServer:
                     pass
 
     def _handle_client(self, conn: socket.socket, address: tuple[str, int]) -> None:
+        self._set_socket_option(conn, socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self._set_socket_option(conn, socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         conn.settimeout(4.0)
         handshake = _read_handshake_line(conn)
         if handshake != PREVIEW_SOCKET_HANDSHAKE:
@@ -229,6 +232,13 @@ class PreviewSocketServer:
 
         if self._logger is not None:
             self._logger(f"Preview socket client connected: {address[0]}:{address[1]}")
+
+    @staticmethod
+    def _set_socket_option(sock: socket.socket, level: int, option: int, value: int) -> None:
+        try:
+            sock.setsockopt(level, option, value)
+        except OSError:
+            pass
 
 
 class LivePreviewServer:
