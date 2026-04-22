@@ -15,6 +15,7 @@ Use this file when you need to:
 - run the first real manual verification
 - collect evidence for pass/fail
 - continue Phase 5 work from `PROJECT_COMPLETION_PLAN.md`
+- verify the embedded Raspberry Pi live preview on the `Capture` screen
 
 Current verified milestone:
 
@@ -61,6 +62,16 @@ Mobile App
 
 `session_key` is the shared public id between app, Pi payloads, worker output,
 history, and result APIs.
+
+The current capture UX can also embed a lightweight live preview feed directly
+from the Pi agent:
+
+```text
+Capture screen -> http://<pi-ip>:8081/preview/latest.jpg
+```
+
+This preview is served directly by the Pi agent and is separate from the
+backend REST API.
 
 ## 4. What This Runbook Should Prove
 
@@ -267,6 +278,15 @@ From the repo root on the Pi, or from the Pi workspace copy:
 ```bash
 python3 backend/pi_agent/pi_agent.py --backend http://<backend-host>:8002 --device-name "Raspberry Pi 4B" --device-code pi-001
 ```
+
+By default, the Pi agent now also starts a lightweight preview server on:
+
+```text
+http://<pi-ip>:8081/preview/latest.jpg
+```
+
+Use `--preview-port 0` only if you intentionally want to disable embedded live
+preview in the mobile app.
 
 If the Pi uses a CSI camera through `Picamera2`, prefer:
 
@@ -504,3 +524,7 @@ Phase 5 is not complete until:
 - at least one video run passes end-to-end
 - the verified steps are documented in this file
 - stale docs no longer contradict the canonical flow
+
+flutter run -d windows --dart-define=POSETRACK_BACKEND_ADDRESS=172.20.10.5:8002
+D:\TaiLieuNam3_DUT\HKII\PBL5\PBL5\backend> .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
+PS D:\TaiLieuNam3_DUT\HKII\PBL5\PBL5> .\backend\.venv\Scripts\python.exe backend\workers\zmq_worker.py 

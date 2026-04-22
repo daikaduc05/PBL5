@@ -11,9 +11,11 @@ import '../components/screen_container.dart';
 import '../components/screen_header_bar.dart';
 import '../components/status_badge.dart';
 import '../config/backend_config.dart';
+import '../models/result_models.dart';
 import '../navigation/app_routes.dart';
 import '../services/api_service.dart';
 import '../services/mock_pose_tracking_service.dart';
+import '../services/result_api.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_typography.dart';
 import '../utils/app_formatters.dart';
@@ -28,6 +30,7 @@ class CaptureControlScreen extends StatefulWidget {
 class _CaptureControlScreenState extends State<CaptureControlScreen> {
   final ApiService _api = ApiService();
   final MockPoseTrackingService _poseService = MockPoseTrackingService();
+  final ResultApi _resultApi = ResultApi();
 
   CaptureMode _selectedMode = CaptureMode.video;
   int _selectedDurationSeconds = 10;
@@ -39,18 +42,28 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
   Duration _elapsed = Duration.zero;
   int? _captureDeviceId;
   String? _captureDeviceName;
+  String? _raspberryPiIp;
   CaptureSessionDraft? _activeRecordingDraft;
   Timer? _timer;
+  Timer? _previewRefreshTimer;
+  Timer? _liveInferenceTimer;
+  int _previewRefreshTick = 0;
+  ResultSessionDetail? _liveResultSession;
+  ResultFrameItem? _latestInferenceFrame;
+  String? _liveInferenceMessage;
 
   @override
   void initState() {
     super.initState();
+    _startPreviewRefreshLoop();
     _loadConfiguration();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _previewRefreshTimer?.cancel();
+    _liveInferenceTimer?.cancel();
     super.dispose();
   }
 
@@ -81,6 +94,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
       _selectedMode = settings.defaultMode;
       _selectedDurationSeconds = settings.defaultDurationSeconds;
       _autoUpload = settings.autoUpload;
+      _raspberryPiIp = settings.raspberryPiIp.trim();
       _pipelineReady = ready;
       _captureDeviceId = captureDeviceId;
       _captureDeviceName = captureDeviceName;
@@ -171,6 +185,75 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
     });
   }
 
+  void _startPreviewRefreshLoop() {
+    _previewRefreshTimer?.cancel();
+    _previewRefreshTimer = Timer.periodic(
+      const Duration(milliseconds: 350),
+      (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+
+        setState(() {
+          _previewRefreshTick += 1;
+        });
+      },
+    );
+  }
+
+  void _startInferencePolling(CaptureSessionDraft draft) {
+    _liveInferenceTimer?.cancel();
+    _pollLiveInference(draft);
+    _liveInferenceTimer = Timer.periodic(const Duration(milliseconds: 900), (timer) {
+      _pollLiveInference(draft);
+    });
+  }
+
+  void _stopInferencePolling() {
+    _liveInferenceTimer?.cancel();
+    _liveInferenceTimer = null;
+  }
+
+  Future<void> _pollLiveInference(CaptureSessionDraft draft) async {
+    try {
+      final session = await _resultApi.getResultSessionDetail(draft.sessionId);
+      if (!mounted) {
+        return;
+      }
+
+      final latestFrameId = session.latestResultFrameId ?? session.latestFrameId;
+      final latestFrame = latestFrameId == null ? null : session.findFrame(latestFrameId);
+
+      setState(() {
+        _liveResultSession = session;
+        _latestInferenceFrame = latestFrame?.hasPoseImage == true ? latestFrame : null;
+        _liveInferenceMessage = latestFrame == null
+            ? 'Frames are still reaching the worker.'
+            : latestFrame.hasResultJson
+            ? 'Latest inference frame ${latestFrame.frameId} is ready.'
+            : 'Latest frame ${latestFrame.frameId} reached the backend. Waiting for JSON.';
+      });
+    } on ResultApiException catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      if (error.message.contains('not found') || error.message.contains('HTTP 404')) {
+        setState(() {
+          _liveResultSession = null;
+          _latestInferenceFrame = null;
+          _liveInferenceMessage = 'Waiting for the first processed frame...';
+        });
+        return;
+      }
+
+      setState(() {
+        _liveInferenceMessage = error.message;
+      });
+    }
+  }
+
   Future<void> _startRecording() async {
     if (_isLoading || _isSubmittingCapture || _isRecording || _selectedMode != CaptureMode.video) {
       return;
@@ -200,8 +283,12 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
         _activeRecordingDraft = draft;
         _isRecording = true;
         _elapsed = Duration.zero;
+        _liveResultSession = null;
+        _latestInferenceFrame = null;
+        _liveInferenceMessage = 'Waiting for the worker to produce the first inference frame...';
       });
       _startRecordingTimer();
+      _startInferencePolling(draft);
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -245,6 +332,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
     }
 
     _timer?.cancel();
+    _stopInferencePolling();
 
     final actualDurationSeconds = _elapsed.inSeconds == 0
         ? 1
@@ -297,6 +385,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
       setState(() {
         _isRecording = true;
       });
+      _startInferencePolling(activeDraft);
       _startRecordingTimer(_elapsed);
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -515,6 +604,103 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
     );
   }
 
+  String? _buildPreviewUrl() {
+    final raspberryPiIp = _raspberryPiIp?.trim();
+    if (raspberryPiIp == null || raspberryPiIp.isEmpty) {
+      return null;
+    }
+
+    return 'http://$raspberryPiIp:${BackendConfig.defaultPiPreviewPort}/preview/latest.jpg?tick=$_previewRefreshTick';
+  }
+
+  Widget _buildCapturePreviewContent() {
+    final previewUrl = _buildPreviewUrl();
+    final latestPoseImageUrl = _isRecording ? _latestInferenceFrame?.poseImageUrl : null;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (previewUrl != null)
+          Image.network(
+            previewUrl,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            filterQuality: FilterQuality.low,
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) {
+                return child;
+              }
+
+              return Stack(
+                fit: StackFit.expand,
+                children: const [
+                  _PreviewPlaceholder(
+                    icon: Icons.wifi_tethering_rounded,
+                    title: 'Connecting to Pi preview',
+                    message:
+                        'The app is waiting for the Raspberry Pi preview endpoint to deliver the first frame.',
+                  ),
+                  Center(
+                    child: SizedBox(
+                      width: 28,
+                      height: 28,
+                      child: CircularProgressIndicator(strokeWidth: 2.4),
+                    ),
+                  ),
+                ],
+              );
+            },
+            errorBuilder: (context, error, stackTrace) {
+              return const _PreviewPlaceholder(
+                icon: Icons.wifi_find_rounded,
+                title: 'Waiting for Pi preview',
+                message:
+                    'The Raspberry Pi preview server is not sending frames yet. Check the Pi agent or camera if this stays empty.',
+              );
+            },
+          )
+        else
+          const _PreviewPlaceholder(
+            icon: Icons.videocam_off_rounded,
+            title: 'Preview unavailable',
+            message:
+                'Set the Raspberry Pi IP in Settings so the app can open the Pi preview feed.',
+          ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.transparent,
+                AppColors.background.withValues(alpha: 0.08),
+                AppColors.background.withValues(alpha: 0.18),
+              ],
+            ),
+          ),
+        ),
+        if (latestPoseImageUrl != null)
+          Positioned.fill(
+            child: _LivePoseOverlay(
+              imageUrl: latestPoseImageUrl,
+              refreshTick: _previewRefreshTick,
+            ),
+          ),
+        if (_isRecording)
+          Positioned(
+            right: 16,
+            bottom: 110,
+            child: _InferenceOverlay(
+              frame: _latestInferenceFrame,
+              message: _liveInferenceMessage,
+              session: _liveResultSession,
+              refreshTick: _previewRefreshTick,
+            ),
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final timerLabel = _selectedMode == CaptureMode.image
@@ -637,19 +823,22 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
               const SizedBox(height: 18),
               PoseVisualizationCard(
                 aspectRatio: 3 / 4,
-                title: _selectedMode == CaptureMode.image
-                    ? 'Camera Preview'
-                    : 'Live Recording Preview',
-                subtitle: _selectedMode == CaptureMode.image
-                    ? 'Front camera aligned for a single high-confidence frame.'
-                    : 'Capture motion cleanly before the AI pipeline receives the clip.',
+                title: _isRecording
+                    ? 'Raspberry Pi Live Camera + Inference'
+                    : 'Raspberry Pi Live Camera',
+                subtitle: _isRecording
+                    ? 'The full Pi camera feed stays live while the newest processed frame is surfaced on top.'
+                    : 'The Raspberry Pi preview stays embedded here even before you start capture.',
                 statusLabel: _isRecording ? 'Recording' : 'Preview',
                 footerLabel: 'Tracking',
-                footerValue: _selectedMode == CaptureMode.image
-                    ? '17 keypoints'
-                    : '${_selectedDurationSeconds}s profile',
+                footerValue: _isRecording
+                    ? (_liveResultSession == null
+                        ? 'AI booting'
+                        : '${_liveResultSession!.frameCount} frames')
+                    : 'Pi Live',
                 timerLabel: timerLabel,
                 isRecording: _isRecording,
+                previewContent: _buildCapturePreviewContent(),
               ),
               const SizedBox(height: 18),
               GlassPanel(
@@ -827,6 +1016,243 @@ class _InfoTag extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PreviewPlaceholder extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String message;
+
+  const _PreviewPlaceholder({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.backgroundSecondary,
+            AppColors.surface,
+          ],
+        ),
+      ),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 40, color: AppColors.primary),
+              const SizedBox(height: 14),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: AppTypography.h3.copyWith(fontSize: 18),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: AppTypography.bodyMedium.copyWith(
+                  fontSize: 13.5,
+                  height: 1.3,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LivePoseOverlay extends StatelessWidget {
+  final String imageUrl;
+  final int refreshTick;
+
+  const _LivePoseOverlay({
+    required this.imageUrl,
+    required this.refreshTick,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          AnimatedOpacity(
+            opacity: 0.94,
+            duration: const Duration(milliseconds: 220),
+            child: Image.network(
+              '$imageUrl?tick=$refreshTick',
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              filterQuality: FilterQuality.low,
+              errorBuilder: (context, error, stackTrace) {
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+          Positioned(
+            top: 56,
+            left: 16,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: AppColors.success.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: AppColors.success.withValues(alpha: 0.28),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.auto_graph_rounded,
+                      color: AppColors.success,
+                      size: 15,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'AI Overlay Live',
+                      style: AppTypography.bodyMedium.copyWith(
+                        color: AppColors.textPrimary,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InferenceOverlay extends StatelessWidget {
+  final ResultFrameItem? frame;
+  final ResultSessionDetail? session;
+  final String? message;
+  final int refreshTick;
+
+  const _InferenceOverlay({
+    required this.frame,
+    required this.session,
+    required this.message,
+    required this.refreshTick,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrl = frame?.poseImageUrl;
+    final chipLabel = frame == null ? 'AI waiting' : 'Inference F${frame!.frameId}';
+    final bodyMessage = message ??
+        (frame == null
+            ? 'Waiting for the worker to produce the first processed frame.'
+            : 'The latest processed pose frame is shown here.');
+
+    return Container(
+      width: 150,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.background.withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.26)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.22),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  chipLabel,
+                  style: AppTypography.bodyMedium.copyWith(
+                    color: AppColors.textPrimary,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              if (session != null)
+                Text(
+                  '${session!.frameCount}',
+                  style: AppTypography.bodyMedium.copyWith(
+                    color: AppColors.primary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: AspectRatio(
+              aspectRatio: 3 / 4,
+              child: imageUrl == null
+                  ? DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Center(
+                        child: Icon(
+                          Icons.auto_graph_rounded,
+                          color: AppColors.textMuted,
+                          size: 24,
+                        ),
+                      ),
+                    )
+                  : Image.network(
+                      '$imageUrl?tick=$refreshTick',
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                    ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            bodyMessage,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: AppTypography.bodyMedium.copyWith(
+              color: AppColors.textSecondary,
+              fontSize: 11.5,
+              height: 1.25,
+            ),
+          ),
+        ],
       ),
     );
   }

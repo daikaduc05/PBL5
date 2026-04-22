@@ -16,7 +16,9 @@ from pi_capture import (
     capture_video_to_zmq,
     has_replay_frames,
     replay_frames_to_zmq,
+    stream_idle_preview,
 )
+from pi_preview import LivePreviewServer, start_preview_server
 
 
 DEFAULT_BACKEND = os.getenv("POSETRACK_BACKEND", "http://localhost:8002")
@@ -25,6 +27,9 @@ REQUEST_TIMEOUT = 5
 DEFAULT_CAMERA_INDEX = int(os.getenv("POSETRACK_CAMERA_INDEX", "0"))
 DEFAULT_CAMERA_FPS = float(os.getenv("POSETRACK_CAMERA_FPS", "10"))
 DEFAULT_CAMERA_WARMUP_SECONDS = float(os.getenv("POSETRACK_CAMERA_WARMUP", "1.0"))
+DEFAULT_PREVIEW_HOST = os.getenv("POSETRACK_PREVIEW_HOST", "0.0.0.0")
+DEFAULT_PREVIEW_PORT = int(os.getenv("POSETRACK_PREVIEW_PORT", "8081"))
+DEFAULT_IDLE_PREVIEW_FPS = float(os.getenv("POSETRACK_IDLE_PREVIEW_FPS", "4"))
 
 
 @dataclass
@@ -36,8 +41,17 @@ class ActiveCapture:
     stop_event: threading.Event
 
 
+@dataclass
+class IdlePreview:
+    thread: threading.Thread
+    stop_event: threading.Event
+
+
 _ACTIVE_CAPTURE_LOCK = threading.Lock()
 _ACTIVE_CAPTURE: ActiveCapture | None = None
+_IDLE_PREVIEW_LOCK = threading.Lock()
+_IDLE_PREVIEW: IdlePreview | None = None
+_PREVIEW_ENABLED = False
 
 
 def log(message: str) -> None:
@@ -192,6 +206,87 @@ def _clear_active_capture(command_id: int) -> None:
             _ACTIVE_CAPTURE = None
 
 
+def _get_idle_preview() -> IdlePreview | None:
+    with _IDLE_PREVIEW_LOCK:
+        if _IDLE_PREVIEW is None:
+            return None
+        if _IDLE_PREVIEW.thread.is_alive():
+            return _IDLE_PREVIEW
+        return None
+
+
+def _register_idle_preview(idle_preview: IdlePreview) -> bool:
+    global _IDLE_PREVIEW
+
+    with _IDLE_PREVIEW_LOCK:
+        if _IDLE_PREVIEW is not None and _IDLE_PREVIEW.thread.is_alive():
+            return False
+
+        _IDLE_PREVIEW = idle_preview
+        return True
+
+
+def _clear_idle_preview(thread: threading.Thread) -> None:
+    global _IDLE_PREVIEW
+
+    with _IDLE_PREVIEW_LOCK:
+        if _IDLE_PREVIEW is not None and _IDLE_PREVIEW.thread is thread:
+            _IDLE_PREVIEW = None
+
+
+def _run_idle_preview_loop() -> None:
+    current_thread = threading.current_thread()
+    idle_preview = _get_idle_preview()
+    if idle_preview is None:
+        return
+
+    try:
+        stream_idle_preview(
+            camera_index=DEFAULT_CAMERA_INDEX,
+            fps=DEFAULT_IDLE_PREVIEW_FPS,
+            warmup_seconds=DEFAULT_CAMERA_WARMUP_SECONDS,
+            stop_event=idle_preview.stop_event,
+            logger=lambda message: log(f"idle_preview: {message}"),
+        )
+    except Exception as exc:
+        log(f"[WARN] Idle preview loop stopped: {exc}")
+    finally:
+        _clear_idle_preview(current_thread)
+
+
+def _ensure_idle_preview_running() -> None:
+    if not _PREVIEW_ENABLED:
+        return
+
+    if _get_idle_preview() is not None or _get_active_capture() is not None:
+        return
+
+    stop_event = threading.Event()
+    idle_thread = threading.Thread(
+        target=_run_idle_preview_loop,
+        daemon=True,
+        name="posetrack-idle-preview",
+    )
+    idle_preview = IdlePreview(thread=idle_thread, stop_event=stop_event)
+
+    if not _register_idle_preview(idle_preview):
+        return
+
+    idle_thread.start()
+    log("Idle preview loop started.")
+
+
+def _stop_idle_preview() -> None:
+    idle_preview = _get_idle_preview()
+    if idle_preview is None:
+        return
+
+    idle_preview.stop_event.set()
+    idle_preview.thread.join(timeout=5)
+    _clear_idle_preview(idle_preview.thread)
+    log("Idle preview loop stopped.")
+
+
 def _run_capture_job(
     command: dict[str, Any],
     backend: str,
@@ -278,6 +373,7 @@ def _run_capture_job(
             log(f"[ERROR] Failed to update command {command_id} to failed: {update_exc}")
     finally:
         _clear_active_capture(command_id)
+        _ensure_idle_preview_running()
 
 
 def _start_capture_command(command: dict[str, Any], backend: str, device_id: int) -> None:
@@ -303,6 +399,7 @@ def _start_capture_command(command: dict[str, Any], backend: str, device_id: int
         update_command_status(backend, device_id, command_id, "failed")
         return
 
+    _stop_idle_preview()
     update_command_status(backend, device_id, command_id, "running")
     capture_thread.start()
     log(f"Capture command {command_id} started in background for session {session_key}.")
@@ -354,6 +451,7 @@ def handle_command(command: dict[str, Any], backend: str, device_id: int) -> Non
 def run(backend: str, device_id: int) -> None:
     log(f"Agent started with backend={backend}, device_id={device_id}")
     log("Press Ctrl+C to stop.")
+    _ensure_idle_preview_running()
 
     while True:
         try:
@@ -384,6 +482,17 @@ def main() -> None:
     parser.add_argument("--device-name", default="Raspberry Pi 4B")
     parser.add_argument("--device-code", default="pi-001")
     parser.add_argument(
+        "--preview-host",
+        default=DEFAULT_PREVIEW_HOST,
+        help="Host for the Pi live preview server (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--preview-port",
+        type=int,
+        default=DEFAULT_PREVIEW_PORT,
+        help="Port for the Pi live preview server, or 0 to disable (default: %(default)s)",
+    )
+    parser.add_argument(
         "--device-id",
         type=int,
         default=int(os.getenv("POSETRACK_DEVICE_ID", "0")) or None,
@@ -391,11 +500,28 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    preview_server: LivePreviewServer | None = None
+    global _PREVIEW_ENABLED
+    if args.preview_port > 0:
+        _PREVIEW_ENABLED = True
+        preview_server = start_preview_server(
+            host=args.preview_host,
+            port=args.preview_port,
+            logger=log,
+        )
+
     device_id = args.device_id
     if not device_id:
         device_id, _ = register_device(args.backend, args.device_name, args.device_code)
 
-    run(args.backend, device_id)
+    try:
+        run(args.backend, device_id)
+    except KeyboardInterrupt:
+        log("Pi agent stopped by user.")
+    finally:
+        _stop_idle_preview()
+        if preview_server is not None:
+            preview_server.close()
 
 
 if __name__ == "__main__":

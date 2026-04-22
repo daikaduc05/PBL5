@@ -20,6 +20,12 @@ class BackendConfig {
     defaultValue: '/home/pi/posetrack/frames',
   );
 
+  // Matches the embedded Pi preview server default in backend/pi_agent/pi_agent.py.
+  static const int defaultPiPreviewPort = int.fromEnvironment(
+    'POSETRACK_PREVIEW_PORT',
+    defaultValue: 8081,
+  );
+
   static const int defaultZmqPort = int.fromEnvironment(
     'POSETRACK_ZMQ_PORT',
     defaultValue: 5555,

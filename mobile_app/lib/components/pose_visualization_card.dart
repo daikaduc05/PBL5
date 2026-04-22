@@ -11,6 +11,7 @@ class PoseVisualizationCard extends StatelessWidget {
   final String footerLabel;
   final String footerValue;
   final String? timerLabel;
+  final Widget? previewContent;
   final Color accent;
   final bool isRecording;
   final bool processed;
@@ -24,6 +25,7 @@ class PoseVisualizationCard extends StatelessWidget {
     required this.footerLabel,
     required this.footerValue,
     this.timerLabel,
+    this.previewContent,
     this.accent = AppColors.primary,
     this.isRecording = false,
     this.processed = false,
@@ -63,6 +65,7 @@ class PoseVisualizationCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(30),
           child: Stack(
             children: [
+              if (previewContent != null) Positioned.fill(child: previewContent!),
               Positioned.fill(
                 child: DecoratedBox(
                   decoration: BoxDecoration(
@@ -78,12 +81,34 @@ class PoseVisualizationCard extends StatelessWidget {
                   ),
                 ),
               ),
-              Positioned.fill(
-                child: CustomPaint(
-                  painter: _PoseVisualizationPainter(
-                    accent: accent,
-                    isRecording: isRecording,
-                    processed: processed,
+              if (previewContent == null)
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: _PoseVisualizationPainter(
+                      accent: accent,
+                      isRecording: isRecording,
+                      processed: processed,
+                    ),
+                  ),
+                ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: 120,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          AppColors.background.withValues(alpha: 0.06),
+                          AppColors.background.withValues(alpha: 0.38),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),

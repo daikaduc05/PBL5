@@ -253,6 +253,67 @@ def capture_video_to_zmq(
     return frame_id
 
 
+def stream_idle_preview(
+    camera_index: int = 0,
+    width: int | None = None,
+    height: int | None = None,
+    fps: float = 5.0,
+    warmup_seconds: float = 1.0,
+    stop_event=None,
+    logger: LogFn | None = None,
+) -> None:
+    picamera2_error: Exception | None = None
+
+    try:
+        _stream_idle_preview_with_picamera2(
+            camera_index=camera_index,
+            width=width,
+            height=height,
+            fps=fps,
+            warmup_seconds=warmup_seconds,
+            stop_event=stop_event,
+            logger=logger,
+        )
+        return
+    except RuntimeError as exc:
+        picamera2_error = exc
+        _log(logger, f"Picamera2 idle preview failed, falling back to OpenCV: {exc}")
+
+    cv2 = _import_cv2()
+    camera = _open_opencv_camera(
+        cv2=cv2,
+        camera_index=camera_index,
+        width=width,
+        height=height,
+        fps=fps,
+    )
+    frame_interval_seconds = 1.0 / max(fps, 1.0)
+
+    try:
+        _warm_up_camera(camera, warmup_seconds)
+
+        while stop_event is None or not stop_event.is_set():
+            loop_started_at = time.monotonic()
+            success, frame = camera.read()
+            if success and frame is not None:
+                update_preview_frame(frame_bytes=_encode_frame_to_jpeg(cv2, frame))
+
+            remaining_sleep = frame_interval_seconds - (time.monotonic() - loop_started_at)
+            if remaining_sleep > 0:
+                if stop_event is not None:
+                    stop_event.wait(remaining_sleep)
+                else:
+                    time.sleep(remaining_sleep)
+    except Exception as exc:
+        if picamera2_error is not None:
+            raise RuntimeError(
+                f"OpenCV idle preview also failed after Picamera2 failure: {picamera2_error}; {exc}"
+            ) from exc
+        raise RuntimeError(f"OpenCV idle preview failed: {exc}") from exc
+    finally:
+        camera.release()
+
+
 def _list_frame_files(frames_dir: str) -> list[Path]:
     frames_path = Path(frames_dir)
     if not frames_path.exists() or not frames_path.is_dir():
@@ -472,6 +533,54 @@ def _capture_video_with_picamera2_to_zmq(
         raise RuntimeError("Picamera2 did not capture any video frames.")
 
     return frame_id
+
+
+def _stream_idle_preview_with_picamera2(
+    camera_index: int,
+    width: int | None,
+    height: int | None,
+    fps: float,
+    warmup_seconds: float,
+    stop_event,
+    logger: LogFn | None,
+) -> None:
+    cv2 = _import_cv2()
+    Picamera2 = _import_picamera2()
+    picamera2 = None
+    frame_interval_seconds = 1.0 / max(fps, 1.0)
+
+    try:
+        picamera2 = Picamera2(camera_num=camera_index)
+        frame_duration = int(1_000_000 / max(fps, 1.0))
+        configuration = picamera2.create_preview_configuration(
+            main={
+                "size": _resolve_picamera_size(width, height, default=(960, 720)),
+                "format": "RGB888",
+            },
+            controls={"FrameDurationLimits": (frame_duration, frame_duration)},
+            buffer_count=4,
+        )
+        picamera2.configure(configuration)
+        picamera2.start()
+        time.sleep(max(warmup_seconds, 1.0))
+        _log(logger, "Picamera2 idle preview loop started.")
+
+        while stop_event is None or not stop_event.is_set():
+            loop_started_at = time.monotonic()
+            frame = _normalize_frame_for_jpeg(cv2, picamera2.capture_array("main"))
+            if frame is not None:
+                update_preview_frame(frame_bytes=_encode_frame_to_jpeg(cv2, frame))
+
+            remaining_sleep = frame_interval_seconds - (time.monotonic() - loop_started_at)
+            if remaining_sleep > 0:
+                if stop_event is not None:
+                    stop_event.wait(remaining_sleep)
+                else:
+                    time.sleep(remaining_sleep)
+    except Exception as exc:
+        raise RuntimeError(f"Picamera2 idle preview failed: {exc}") from exc
+    finally:
+        _close_picamera2(picamera2)
 
 
 def _resolve_picamera_size(

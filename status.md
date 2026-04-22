@@ -45,6 +45,8 @@ pending -> acknowledged -> running -> completed | failed
   - live camera video streaming
   - background capture jobs so `stop_recording` can stop an active run
   - Raspberry Pi CSI camera fallback through `Picamera2` when `/dev/video0` is not available but `rpicam/libcamera` is
+  - an embedded live preview server that can expose `http://<pi-ip>:8081/preview/latest.jpg`
+  - idle preview mode so the mobile app can show the Pi camera on the `Capture` screen before a run starts
 - Raspberry Pi CSI camera photo capture has been manually verified end-to-end with:
   - Pi agent
   - backend command lifecycle
@@ -60,6 +62,8 @@ pending -> acknowledged -> running -> completed | failed
 - `Capture` no longer creates only mock drafts for the MVP path.
 - `Capture` image mode now sends `capture_photo` instead of forcing everything through `start_recording`.
 - `Capture` video mode now sends `start_recording` when recording begins and `stop_recording` when the user stops, then moves to `Processing`.
+- `Capture` can now embed the Raspberry Pi live preview feed directly on the capture screen instead of showing only a decorative placeholder.
+- While recording, `Capture` now surfaces the newest processed inference frame from the active backend session on top of the live preview card.
 - `Processing` is now backend-only for the default flow and no longer falls back to local mock finalize behavior.
 - Result screens now share one backend result source of truth through `ResultApi`.
 - `Result` route now opens backend sessions only instead of accepting demo result objects on the main path.
