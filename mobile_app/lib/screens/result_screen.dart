@@ -551,6 +551,10 @@ class _FrameDetailPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readyDetail = detail;
+    final tracking = readyDetail?.formTracking;
+    final primaryDetection = readyDetail?.poseOverlay?.primaryDetection;
+    final formStatus = tracking?.status ?? primaryDetection?.formStatus;
+    final formMessage = tracking?.message ?? primaryDetection?.formFeedback;
 
     return GlassPanel(
       child: Column(
@@ -616,9 +620,45 @@ class _FrameDetailPanel extends StatelessWidget {
                   icon: Icons.person_search_rounded,
                   label: 'Detections: ${readyDetail.numDetections ?? 0}',
                 ),
+                if (formStatus != null)
+                  StatusBadge(
+                    label: _formStatusLabel(formStatus),
+                    color: _formStatusColor(formStatus),
+                    icon: Icons.fitness_center_rounded,
+                  ),
+                if (tracking != null)
+                  _DetailChip(
+                    icon: Icons.repeat_rounded,
+                    label: 'Rep ${tracking.repCount}',
+                  ),
+                if (tracking?.stage != null)
+                  _DetailChip(
+                    icon: Icons.stairs_rounded,
+                    label: 'Stage ${tracking!.stage}',
+                  ),
               ],
             ),
             const SizedBox(height: 14),
+            if (formMessage != null)
+              _DetailRow(
+                label: 'Form feedback',
+                value: formMessage,
+              ),
+            if (tracking?.kneeMin != null)
+              _DetailRow(
+                label: 'Knee min',
+                value: tracking!.kneeMin!.toStringAsFixed(1),
+              ),
+            if (tracking?.hipMin != null)
+              _DetailRow(
+                label: 'Hip min',
+                value: tracking!.hipMin!.toStringAsFixed(1),
+              ),
+            if (tracking?.standingKnee != null)
+              _DetailRow(
+                label: 'Standing knee',
+                value: tracking!.standingKnee!.toStringAsFixed(1),
+              ),
             if (readyDetail.poseOutputPath != null)
               _DetailRow(
                 label: 'Pose output path',
@@ -879,5 +919,27 @@ class _DetailRow extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+Color _formStatusColor(String? status) {
+  switch (status) {
+    case 'GOOD_FORM':
+      return AppColors.success;
+    case 'BAD_FORM':
+      return AppColors.error;
+    default:
+      return AppColors.warning;
+  }
+}
+
+String _formStatusLabel(String? status) {
+  switch (status) {
+    case 'GOOD_FORM':
+      return 'Good Form';
+    case 'BAD_FORM':
+      return 'Bad Form';
+    default:
+      return 'Unknown Form';
   }
 }

@@ -316,6 +316,11 @@ class _SummaryPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tracking = detail.formTracking;
+    final primaryDetection = detail.poseOverlay?.primaryDetection;
+    final formStatus = tracking?.status ?? primaryDetection?.formStatus;
+    final formMessage = tracking?.message ?? primaryDetection?.formFeedback;
+
     return GlassPanel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -353,8 +358,47 @@ class _SummaryPanel extends StatelessWidget {
                 label: 'Frame',
                 value: '${detail.frameId}',
               ),
+              if (formStatus != null)
+                StatusBadge(
+                  label: _formStatusLabel(formStatus),
+                  color: _formStatusColor(formStatus),
+                  icon: Icons.fitness_center_rounded,
+                ),
+              if (tracking != null)
+                _MetricChip(
+                  icon: Icons.repeat_rounded,
+                  label: 'Rep',
+                  value: '${tracking.repCount}',
+                ),
+              if (tracking?.stage != null)
+                _MetricChip(
+                  icon: Icons.stairs_rounded,
+                  label: 'Stage',
+                  value: tracking!.stage!,
+                ),
             ],
           ),
+          if (formMessage != null) ...[
+            const SizedBox(height: 14),
+            _DetailRow(
+              label: 'Form feedback',
+              value: formMessage,
+            ),
+          ],
+          if (tracking?.kneeMin != null) ...[
+            const SizedBox(height: 10),
+            _DetailRow(
+              label: 'Knee min',
+              value: tracking!.kneeMin!.toStringAsFixed(1),
+            ),
+          ],
+          if (tracking?.hipMin != null) ...[
+            const SizedBox(height: 10),
+            _DetailRow(
+              label: 'Hip min',
+              value: tracking!.hipMin!.toStringAsFixed(1),
+            ),
+          ],
           if (detail.poseOutputPath != null) ...[
             const SizedBox(height: 14),
             _DetailRow(
@@ -722,4 +766,26 @@ String _stringifyValue(Object? value) {
   }
 
   return const JsonEncoder.withIndent('  ').convert(value);
+}
+
+Color _formStatusColor(String? status) {
+  switch (status) {
+    case 'GOOD_FORM':
+      return AppColors.success;
+    case 'BAD_FORM':
+      return AppColors.error;
+    default:
+      return AppColors.warning;
+  }
+}
+
+String _formStatusLabel(String? status) {
+  switch (status) {
+    case 'GOOD_FORM':
+      return 'Good Form';
+    case 'BAD_FORM':
+      return 'Bad Form';
+    default:
+      return 'Unknown Form';
+  }
 }

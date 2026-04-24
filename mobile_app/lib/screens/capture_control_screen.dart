@@ -231,17 +231,21 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
         latestDetail = null;
       }
 
+      final liveInferenceMessage = latestFrame == null
+          ? 'Frames are still reaching the worker.'
+          : latestDetail?.formTracking != null
+              ? 'Frame ${latestFrame.frameId}: ${latestDetail!.formTracking!.status} - ${latestDetail.formTracking!.message}'
+              : latestDetail?.poseOverlay?.hasDetections == true
+                  ? 'Frame ${latestFrame.frameId}: ${latestDetail!.poseOverlay!.detections.length} pose detection(s) live.'
+                  : latestFrame.hasResultJson
+                      ? 'Frame ${latestFrame.frameId} is ready, but no pose was detected.'
+                      : 'Latest frame ${latestFrame.frameId} reached the backend. Waiting for JSON.';
+
       setState(() {
         _liveResultSession = session;
         _latestInferenceFrame = latestFrame?.hasPoseImage == true ? latestFrame : null;
         _latestInferenceDetail = latestDetail;
-        _liveInferenceMessage = latestFrame == null
-            ? 'Frames are still reaching the worker.'
-            : latestDetail?.poseOverlay?.hasDetections == true
-            ? 'Frame ${latestFrame.frameId}: ${latestDetail!.poseOverlay!.detections.length} pose detection(s) live.'
-            : latestFrame.hasResultJson
-            ? 'Frame ${latestFrame.frameId} is ready, but no pose was detected.'
-            : 'Latest frame ${latestFrame.frameId} reached the backend. Waiting for JSON.';
+        _liveInferenceMessage = liveInferenceMessage;
       });
     } on ResultApiException catch (error) {
       if (!mounted) {
@@ -1389,6 +1393,13 @@ class _LivePoseMetadataOverlay extends StatelessWidget {
     if (overlay == null || !overlay.hasDetections) {
       return const SizedBox.shrink();
     }
+    final tracking = detail.formTracking;
+    final primaryDetection = overlay.primaryDetection;
+    final status = tracking?.status ?? primaryDetection?.formStatus ?? 'UNKNOWN';
+    final statusColor = _formStatusColor(status);
+    final statusLabel = tracking != null || primaryDetection?.formStatus != null
+        ? 'Form ${_formStatusShortLabel(status)}'
+        : 'AI Overlay Live';
 
     return IgnorePointer(
       child: Stack(
@@ -1402,10 +1413,10 @@ class _LivePoseMetadataOverlay extends StatelessWidget {
             left: 16,
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: AppColors.success.withValues(alpha: 0.16),
+                color: statusColor.withValues(alpha: 0.16),
                 borderRadius: BorderRadius.circular(999),
                 border: Border.all(
-                  color: AppColors.success.withValues(alpha: 0.28),
+                  color: statusColor.withValues(alpha: 0.28),
                 ),
               ),
               child: Padding(
@@ -1413,14 +1424,14 @@ class _LivePoseMetadataOverlay extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.auto_graph_rounded,
-                      color: AppColors.success,
+                      color: statusColor,
                       size: 15,
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      'AI Overlay Live',
+                      statusLabel,
                       style: AppTypography.bodyMedium.copyWith(
                         color: AppColors.textPrimary,
                         fontSize: 11.5,
@@ -1455,8 +1466,13 @@ class _InferenceOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     final chipLabel = frame == null ? 'AI waiting' : 'Inference F${frame!.frameId}';
     final overlay = detail?.poseOverlay;
-    final firstDetection = overlay?.detections.isNotEmpty == true ? overlay!.detections.first : null;
-    final bodyMessage = message ??
+    final tracking = detail?.formTracking;
+    final firstDetection = overlay?.primaryDetection;
+    final status = tracking?.status ?? firstDetection?.formStatus ?? 'UNKNOWN';
+    final accent = _formStatusColor(status);
+    final bodyMessage = tracking?.message ??
+        firstDetection?.formFeedback ??
+        message ??
         (frame == null
             ? 'Waiting for the worker to produce the first processed frame.'
             : 'The frontend is now rendering pose metadata directly on top of the Pi preview.');
@@ -1467,7 +1483,7 @@ class _InferenceOverlay extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.background.withValues(alpha: 0.78),
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.26)),
+        border: Border.all(color: accent.withValues(alpha: 0.26)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.22),
@@ -1485,7 +1501,7 @@ class _InferenceOverlay extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.14),
+                  color: accent.withValues(alpha: 0.14),
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
@@ -1502,7 +1518,7 @@ class _InferenceOverlay extends StatelessWidget {
                 Text(
                   '${session!.frameCount}',
                   style: AppTypography.bodyMedium.copyWith(
-                    color: AppColors.primary,
+                    color: accent,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                   ),
@@ -1517,16 +1533,42 @@ class _InferenceOverlay extends StatelessWidget {
               _MiniMetricChip(
                 label: 'Det',
                 value: '${overlay?.detections.length ?? 0}',
+                accent: accent,
               ),
-              if (firstDetection != null && firstDetection.angles['knee'] != null)
+              _MiniMetricChip(
+                label: 'Form',
+                value: _formStatusShortLabel(status),
+                accent: accent,
+              ),
+              if (tracking != null)
+                _MiniMetricChip(
+                  label: 'Rep',
+                  value: '${tracking.repCount}',
+                  accent: accent,
+                ),
+              if (tracking?.stage != null)
+                _MiniMetricChip(
+                  label: 'Stage',
+                  value: tracking!.stage!,
+                  accent: accent,
+                ),
+              if (tracking?.kneeMin != null)
+                _MiniMetricChip(
+                  label: 'Min K',
+                  value: tracking!.kneeMin!.toStringAsFixed(0),
+                  accent: accent,
+                ),
+              if (firstDetection != null && firstDetection.angles['knee'] != null && tracking?.kneeMin == null)
                 _MiniMetricChip(
                   label: 'Knee',
                   value: firstDetection.angles['knee']!.toStringAsFixed(0),
+                  accent: accent,
                 ),
               if (firstDetection != null && firstDetection.angles['hip'] != null)
                 _MiniMetricChip(
                   label: 'Hip',
                   value: firstDetection.angles['hip']!.toStringAsFixed(0),
+                  accent: accent,
                 ),
             ],
           ),
@@ -1550,10 +1592,12 @@ class _InferenceOverlay extends StatelessWidget {
 class _MiniMetricChip extends StatelessWidget {
   final String label;
   final String value;
+  final Color accent;
 
   const _MiniMetricChip({
     required this.label,
     required this.value,
+    this.accent = AppColors.primary,
   });
 
   @override
@@ -1563,7 +1607,7 @@ class _MiniMetricChip extends StatelessWidget {
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(999),
         border: Border.all(
-          color: AppColors.primary.withValues(alpha: 0.18),
+          color: accent.withValues(alpha: 0.18),
         ),
       ),
       child: Padding(
@@ -1590,22 +1634,23 @@ class _LivePosePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final linePaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3
-      ..strokeCap = StrokeCap.round
-      ..color = AppColors.success.withValues(alpha: 0.92);
-
-    final pointPaint = Paint()
-      ..style = PaintingStyle.fill
-      ..color = AppColors.primary.withValues(alpha: 0.96);
-
     final bboxPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2
       ..color = Colors.white.withValues(alpha: 0.35);
 
     for (final detection in overlay.detections) {
+      final accent = _formStatusColor(detection.formStatus);
+      final linePaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3
+        ..strokeCap = StrokeCap.round
+        ..color = accent.withValues(alpha: 0.92);
+
+      final pointPaint = Paint()
+        ..style = PaintingStyle.fill
+        ..color = accent.withValues(alpha: 0.96);
+
       final points = detection.normalizedKeypoints;
       if (points.isEmpty) {
         continue;
@@ -1623,7 +1668,20 @@ class _LivePosePainter extends CustomPainter {
             ),
             const Radius.circular(12),
           ),
-          bboxPaint,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = bboxPaint.strokeWidth
+            ..color = accent.withValues(alpha: 0.76),
+        );
+        _paintStatusText(
+          canvas,
+          size,
+          _formStatusShortLabel(detection.formStatus),
+          anchor: Offset(
+            bbox.x1 * size.width,
+            bbox.y1 * size.height - 18,
+          ),
+          accent: accent,
         );
       }
 
@@ -1653,19 +1711,22 @@ class _LivePosePainter extends CustomPainter {
         );
       }
 
+      final kneeIndex = detection.sideUsed == 'left' ? 13 : 14;
+      final hipIndex = detection.sideUsed == 'left' ? 11 : 12;
+
       _paintAngleText(
         canvas,
         size,
         points,
         'K ${detection.angles['knee']?.toStringAsFixed(0) ?? '-'}',
-        index: 14,
+        index: kneeIndex,
       );
       _paintAngleText(
         canvas,
         size,
         points,
         'H ${detection.angles['hip']?.toStringAsFixed(0) ?? '-'}',
-        index: 12,
+        index: hipIndex,
       );
     }
   }
@@ -1715,8 +1776,70 @@ class _LivePosePainter extends CustomPainter {
     textPainter.paint(canvas, offset);
   }
 
+  void _paintStatusText(
+    Canvas canvas,
+    Size size,
+    String text, {
+    required Offset anchor,
+    required Color accent,
+  }) {
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: AppTypography.bodyMedium.copyWith(
+          color: Colors.white,
+          fontSize: 10.5,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    final offset = Offset(
+      anchor.dx.clamp(0.0, size.width - textPainter.width),
+      anchor.dy.clamp(0.0, size.height - textPainter.height),
+    );
+
+    final background = RRect.fromRectAndRadius(
+      Rect.fromLTWH(
+        offset.dx - 4,
+        offset.dy - 2,
+        textPainter.width + 8,
+        textPainter.height + 4,
+      ),
+      const Radius.circular(8),
+    );
+    canvas.drawRRect(
+      background,
+      Paint()..color = accent.withValues(alpha: 0.72),
+    );
+    textPainter.paint(canvas, offset);
+  }
+
   @override
   bool shouldRepaint(covariant _LivePosePainter oldDelegate) {
     return oldDelegate.overlay != overlay;
+  }
+}
+
+Color _formStatusColor(String? status) {
+  switch (status) {
+    case 'GOOD_FORM':
+      return AppColors.success;
+    case 'BAD_FORM':
+      return AppColors.error;
+    default:
+      return AppColors.warning;
+  }
+}
+
+String _formStatusShortLabel(String? status) {
+  switch (status) {
+    case 'GOOD_FORM':
+      return 'GOOD';
+    case 'BAD_FORM':
+      return 'BAD';
+    default:
+      return 'UNKNOWN';
   }
 }

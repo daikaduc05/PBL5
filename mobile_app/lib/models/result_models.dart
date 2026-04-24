@@ -128,6 +128,8 @@ class FrameResultDetail {
 
   PoseOverlayData? get poseOverlay => PoseOverlayData.fromPayload(payload);
 
+  FormTrackingSummary? get formTracking => FormTrackingSummary.fromPayload(payload);
+
   String? get errorMessage {
     final inferenceResult = payload['inference_result'];
     if (inferenceResult is Map) {
@@ -160,17 +162,27 @@ class FrameResultDetail {
 class PoseOverlayData {
   final int? imageWidth;
   final int? imageHeight;
+  final int? primaryDetectionIndex;
   final List<List<int>> skeletonEdges;
   final List<PoseDetection> detections;
 
   const PoseOverlayData({
     required this.imageWidth,
     required this.imageHeight,
+    required this.primaryDetectionIndex,
     required this.skeletonEdges,
     required this.detections,
   });
 
   bool get hasDetections => detections.isNotEmpty;
+
+  PoseDetection? get primaryDetection {
+    final index = primaryDetectionIndex;
+    if (index != null && index >= 0 && index < detections.length) {
+      return detections[index];
+    }
+    return detections.isEmpty ? null : detections.first;
+  }
 
   static PoseOverlayData? fromPayload(Map<String, dynamic> payload) {
     final inferenceResult = payload['inference_result'];
@@ -204,6 +216,7 @@ class PoseOverlayData {
     return PoseOverlayData(
       imageWidth: imageSize is Map ? _parseInt(imageSize['width']) : null,
       imageHeight: imageSize is Map ? _parseInt(imageSize['height']) : null,
+      primaryDetectionIndex: _parseInt(inferenceMap['primary_detection_index']),
       skeletonEdges: skeletonEdges,
       detections: detections,
     );
@@ -213,12 +226,22 @@ class PoseOverlayData {
 class PoseDetection {
   final PoseBoundingBox? bboxNormalized;
   final List<PosePoint> normalizedKeypoints;
+  final List<double> keypointScores;
   final Map<String, double> angles;
+  final String formStatus;
+  final String? formFeedback;
+  final String? sideUsed;
+  final bool validPose;
 
   const PoseDetection({
     required this.bboxNormalized,
     required this.normalizedKeypoints,
+    required this.keypointScores,
     required this.angles,
+    required this.formStatus,
+    required this.formFeedback,
+    required this.sideUsed,
+    required this.validPose,
   });
 
   factory PoseDetection.fromJson(Map<String, dynamic> json) {
@@ -226,6 +249,10 @@ class PoseDetection {
     final keypoints = (json['keypoints_normalized'] as List<dynamic>? ?? const <dynamic>[])
         .whereType<List>()
         .map(PosePoint.fromList)
+        .toList(growable: false);
+    final keypointScores = (json['keypoint_scores'] as List<dynamic>? ?? const <dynamic>[])
+        .map(_parseDouble)
+        .whereType<double>()
         .toList(growable: false);
 
     final anglesRaw = json['angles'];
@@ -242,7 +269,117 @@ class PoseDetection {
     return PoseDetection(
       bboxNormalized: bbox is Map ? PoseBoundingBox.fromJson(Map<String, dynamic>.from(bbox)) : null,
       normalizedKeypoints: keypoints,
+      keypointScores: keypointScores,
       angles: angles,
+      formStatus: json['form_status'] as String? ?? 'UNKNOWN',
+      formFeedback: json['form_feedback'] as String?,
+      sideUsed: json['side_used'] as String?,
+      validPose: json['valid_pose'] as bool? ?? angles.isNotEmpty,
+    );
+  }
+}
+
+class FormTrackingSummary {
+  final int repCount;
+  final String? stage;
+  final String status;
+  final String message;
+  final double? kneeAngle;
+  final double? hipAngle;
+  final double? kneeMin;
+  final double? hipMin;
+  final double? standingKnee;
+  final String? sideUsed;
+  final bool validPose;
+  final bool repCompleted;
+  final FormRepSummary? lastRepSummary;
+
+  const FormTrackingSummary({
+    required this.repCount,
+    required this.stage,
+    required this.status,
+    required this.message,
+    required this.kneeAngle,
+    required this.hipAngle,
+    required this.kneeMin,
+    required this.hipMin,
+    required this.standingKnee,
+    required this.sideUsed,
+    required this.validPose,
+    required this.repCompleted,
+    required this.lastRepSummary,
+  });
+
+  static FormTrackingSummary? fromPayload(Map<String, dynamic> payload) {
+    final inferenceResult = payload['inference_result'];
+    if (inferenceResult is! Map) {
+      return null;
+    }
+
+    final formTrackingRaw = inferenceResult['form_tracking'];
+    if (formTrackingRaw is! Map) {
+      return null;
+    }
+
+    final formTracking = Map<String, dynamic>.from(formTrackingRaw);
+    final lastRepSummaryRaw = formTracking['last_rep_summary'];
+
+    return FormTrackingSummary(
+      repCount: _parseInt(formTracking['rep_count']) ?? 0,
+      stage: formTracking['stage'] as String?,
+      status: formTracking['status'] as String? ?? 'UNKNOWN',
+      message: formTracking['message'] as String? ?? 'Awaiting full rep',
+      kneeAngle: _parseDouble(formTracking['knee_angle']),
+      hipAngle: _parseDouble(formTracking['hip_angle']),
+      kneeMin: _parseDouble(formTracking['knee_min']),
+      hipMin: _parseDouble(formTracking['hip_min']),
+      standingKnee: _parseDouble(formTracking['standing_knee']),
+      sideUsed: formTracking['side_used'] as String?,
+      validPose: formTracking['valid_pose'] as bool? ?? false,
+      repCompleted: formTracking['rep_completed'] as bool? ?? false,
+      lastRepSummary: lastRepSummaryRaw is Map
+          ? FormRepSummary.fromJson(Map<String, dynamic>.from(lastRepSummaryRaw))
+          : null,
+    );
+  }
+}
+
+class FormRepSummary {
+  final int repCount;
+  final String status;
+  final String message;
+  final List<String> reasons;
+  final String? primaryReason;
+  final double? kneeMin;
+  final double? hipMin;
+  final double? standingKnee;
+  final String? sideUsed;
+
+  const FormRepSummary({
+    required this.repCount,
+    required this.status,
+    required this.message,
+    required this.reasons,
+    required this.primaryReason,
+    required this.kneeMin,
+    required this.hipMin,
+    required this.standingKnee,
+    required this.sideUsed,
+  });
+
+  factory FormRepSummary.fromJson(Map<String, dynamic> json) {
+    final reasonsRaw = json['reasons'] as List<dynamic>? ?? const <dynamic>[];
+
+    return FormRepSummary(
+      repCount: _parseInt(json['rep_count']) ?? 0,
+      status: json['status'] as String? ?? 'UNKNOWN',
+      message: json['message'] as String? ?? 'Awaiting full rep',
+      reasons: reasonsRaw.whereType<String>().toList(growable: false),
+      primaryReason: json['primary_reason'] as String?,
+      kneeMin: _parseDouble(json['knee_min']),
+      hipMin: _parseDouble(json['hip_min']),
+      standingKnee: _parseDouble(json['standing_knee']),
+      sideUsed: json['side_used'] as String?,
     );
   }
 }

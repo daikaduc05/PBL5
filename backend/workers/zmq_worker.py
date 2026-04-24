@@ -3,7 +3,7 @@
 import json
 import sys
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import zmq
 
@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 WORKER_DIR = Path(__file__).resolve().parent
 _RUN_POSE_INFERENCE: Callable[[str, str | None], dict] | None = None
+_SESSION_TRACKERS: dict[str, Any] = {}
 
 
 def get_pose_inference_runner() -> Callable[[str, str | None], dict]:
@@ -25,6 +26,114 @@ def get_pose_inference_runner() -> Callable[[str, str | None], dict]:
         _RUN_POSE_INFERENCE = run_pose_inference
 
     return _RUN_POSE_INFERENCE
+
+
+def get_session_tracker(session_id: str) -> Any:
+    tracker = _SESSION_TRACKERS.get(session_id)
+    if tracker is None:
+        from core_model.form_checker import SquatFormTracker
+
+        tracker = SquatFormTracker()
+        _SESSION_TRACKERS[session_id] = tracker
+    return tracker
+
+
+def _parse_float(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _extract_bbox_score(detection: dict[str, Any]) -> float:
+    bbox = detection.get("bbox")
+    if not isinstance(bbox, dict):
+        return 0.0
+    return _parse_float(bbox.get("score")) or 0.0
+
+
+def _select_primary_detection(detections: list[dict[str, Any]]) -> tuple[int | None, dict[str, Any] | None]:
+    if not detections:
+        return None, None
+
+    indexed_detection = max(
+        enumerate(detections),
+        key=lambda item: _extract_bbox_score(item[1]),
+    )
+    return indexed_detection[0], indexed_detection[1]
+
+
+def _build_invalid_angle_info() -> dict[str, Any]:
+    from core_model.form_checker import DEFAULT_INVALID_MESSAGE
+
+    return {
+        "valid": False,
+        "knee": None,
+        "hip": None,
+        "side_used": None,
+        "reason": DEFAULT_INVALID_MESSAGE,
+    }
+
+
+def _build_angle_info_from_detection(detection: dict[str, Any]) -> dict[str, Any]:
+    from core_model.form_checker import DEFAULT_INVALID_MESSAGE
+
+    angles = detection.get("angles")
+    knee = None
+    hip = None
+    if isinstance(angles, dict):
+        knee = _parse_float(angles.get("knee"))
+        hip = _parse_float(angles.get("hip"))
+
+    valid_pose = bool(detection.get("valid_pose")) and knee is not None and hip is not None
+    return {
+        "valid": valid_pose,
+        "knee": knee,
+        "hip": hip,
+        "side_used": detection.get("side_used"),
+        "reason": detection.get("form_feedback") or DEFAULT_INVALID_MESSAGE,
+    }
+
+
+def enrich_result_with_form_tracking(session_id: str, result: dict[str, Any]) -> dict[str, Any]:
+    inference_result = result if isinstance(result, dict) else {}
+    detections_raw = inference_result.get("detections")
+    detections = [
+        dict(detection)
+        for detection in detections_raw
+        if isinstance(detection, dict)
+    ] if isinstance(detections_raw, list) else []
+
+    tracker = get_session_tracker(session_id)
+    primary_index, primary_detection = _select_primary_detection(detections)
+    angle_info = (
+        _build_angle_info_from_detection(primary_detection)
+        if primary_detection is not None
+        else _build_invalid_angle_info()
+    )
+    form_tracking = tracker.update(angle_info)
+
+    if primary_index is not None and primary_detection is not None:
+        updated_detection = dict(primary_detection)
+        updated_detection["form_status"] = form_tracking["status"]
+        updated_detection["form_feedback"] = form_tracking["message"]
+        updated_detection["valid_pose"] = form_tracking["valid_pose"]
+        updated_detection["side_used"] = form_tracking["side_used"]
+        if form_tracking["valid_pose"]:
+            updated_detection["angles"] = {
+                "knee": round(float(form_tracking["knee_angle"]), 2),
+                "hip": round(float(form_tracking["hip_angle"]), 2),
+            }
+        detections[primary_index] = updated_detection
+
+    inference_result["detections"] = detections
+    inference_result["form_tracking"] = form_tracking
+    inference_result["primary_detection_index"] = primary_index
+    return inference_result
 
 
 def save_result_json(result_payload: dict, result_json_path: Path) -> None:
@@ -59,6 +168,7 @@ def run_pose_for_saved_frame(input_path: Path, session_id: str, frame_id: str, m
     try:
         pose_inference_runner = get_pose_inference_runner()
         result = pose_inference_runner(str(input_path), str(result_path))
+        result = enrich_result_with_form_tracking(session_id, result)
         print(f"[ZMQ Worker] Pose inference result: {result}")
         if not result.get("success", False):
             print("[ZMQ Worker] Warning: pose inference returned success=False.")

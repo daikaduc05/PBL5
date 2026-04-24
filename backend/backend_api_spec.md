@@ -454,6 +454,54 @@ Read the worker JSON result for one frame.
   "num_detections": 1,
   "pose_output_path": "backend/workers/results/session_0012/frame_1_pose.jpg",
   "inference_result": {
+    "success": true,
+    "num_detections": 1,
+    "primary_detection_index": 0,
+    "form_tracking": {
+      "rep_count": 3,
+      "stage": "up",
+      "status": "GOOD_FORM",
+      "message": "GOOD FORM",
+      "knee_angle": 171.3,
+      "hip_angle": 162.4,
+      "knee_min": 95.7,
+      "hip_min": 57.8,
+      "standing_knee": 171.3,
+      "side_used": "right",
+      "valid_pose": true,
+      "rep_completed": true,
+      "last_rep_summary": {
+        "rep_count": 3,
+        "status": "GOOD_FORM",
+        "message": "GOOD FORM",
+        "reasons": [],
+        "primary_reason": null,
+        "knee_min": 95.7,
+        "hip_min": 57.8,
+        "standing_knee": 171.3,
+        "side_used": "right"
+      }
+    },
+    "detections": [
+      {
+        "bbox": {
+          "x1": 233.1,
+          "y1": 41.8,
+          "x2": 418.4,
+          "y2": 470.2,
+          "score": 0.94
+        },
+        "angles": {
+          "knee": 171.3,
+          "hip": 162.4
+        },
+        "form_status": "GOOD_FORM",
+        "form_feedback": "GOOD FORM",
+        "side_used": "right",
+        "valid_pose": true,
+        "keypoint_scores": [0.92, 0.91, 0.94]
+      }
+    ],
     "error": null
   }
 }

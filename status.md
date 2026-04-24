@@ -2,15 +2,34 @@
 
 ## Date
 
-2026-04-21
+2026-04-24
 
 ## Current State
+
+### Form Checker Threshold V1
+
+Reviewed on 2026-04-24 after manual demo verification:
+
+- `MIN_KEYPOINT_SCORE = 0.20`
+- `UP_THRESHOLD = 169.0`
+- `DOWN_THRESHOLD = 120.0`
+- `KNEE_DEPTH_THRESHOLD = 100.0`
+- `HIP_LEAN_THRESHOLD = 45.0`
+- `STAND_KNEE_THRESHOLD = 155.0`
+
+Locked behavior for V1:
+
+- `knee_min <= 100` and other rules pass -> `GOOD_FORM` with message `GOOD FORM`
+- `100 < knee_min <= 120` -> rep still counts, but result is `BAD_FORM` with message `BAD FORM: Not deep enough`
+- `knee_min > 120` -> do not count a rep
+- missing body / unstable keypoints -> `UNKNOWN`
 
 The technical core is working:
 
 - Raspberry Pi agent can register, heartbeat, poll command, and execute replay/send flow.
 - Backend worker can receive frames, run inference, and write result files.
 - Result API can read processed sessions from `backend/workers/results/<session_key>`.
+- Backend worker now keeps a `SquatFormTracker` per `session_id`, so rep counting and form evaluation persist across sequential frames instead of resetting frame-by-frame.
 
 The MVP app orchestration is now partially real:
 
@@ -65,6 +84,11 @@ pending -> acknowledged -> running -> completed | failed
 - `Capture` video mode now sends `start_recording` when recording begins and `stop_recording` when the user stops, then moves to `Processing`.
 - `Capture` can now embed the Raspberry Pi live preview feed directly on the capture screen through a persistent preview socket instead of frame-by-frame HTTP reconnects.
 - While recording, `Capture` now surfaces the newest processed inference frame from the active backend session on top of the live preview card.
+- `Capture`, `Result`, and `Frame Detail` now parse worker form-check fields from result JSON:
+  - `form_tracking`
+  - `primary_detection_index`
+  - detection-level `form_status`, `form_feedback`, `side_used`, `valid_pose`, `keypoint_scores`
+- The live overlay and result panels now show form status, feedback, rep count, stage, and min knee/hip metrics when the worker provides them.
 - `Processing` is now backend-only for the default flow and no longer falls back to local mock finalize behavior.
 - Result screens now share one backend result source of truth through `ResultApi`.
 - `Result` route now opens backend sessions only instead of accepting demo result objects on the main path.
@@ -134,6 +158,8 @@ The action items from the previous snapshot are now completed:
 
 - `python -m compileall backend/app`
 - `python -m compileall backend/pi_agent`
+- `backend\\.venv\\Scripts\\python.exe -m py_compile backend\\workers\\zmq_worker.py`
+- `Set-Location backend\\tests; ..\\.venv\\Scripts\\python.exe -m unittest -v test_zmq_worker.py`
 - local backend database check confirmed newest canonical run:
   - command `7`
   - session `sess_000008`
