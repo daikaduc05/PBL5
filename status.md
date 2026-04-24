@@ -89,6 +89,39 @@ pending -> acknowledged -> running -> completed | failed
   - `primary_detection_index`
   - detection-level `form_status`, `form_feedback`, `side_used`, `valid_pose`, `keypoint_scores`
 - The live overlay and result panels now show form status, feedback, rep count, stage, and min knee/hip metrics when the worker provides them.
+- Preview tuning Phase 0 baseline was captured from code on 2026-04-24:
+  - idle preview FPS `3`
+  - recording preview FPS `3`
+  - camera FPS `10`
+  - preview JPEG quality `55`
+  - preview max size `480x360`
+- Preview tuning Phase 1 V1 is now set for the next Pi verification pass:
+  - idle preview FPS `5`
+  - recording preview FPS `6`
+  - video capture FPS `8`
+  - preview JPEG quality `50`
+  - video capture size `640x480`
+- After the first real-device check, idle preview still felt laggy before recording.
+- Preview tuning Phase 1.5 is now applied in code for the next Pi restart/test:
+  - idle preview FPS `6`
+  - idle preview source size `480x360`
+  - recording preview FPS `6`
+  - video capture FPS `8`
+  - preview JPEG quality `45`
+  - video capture size `640x480`
+  - lower idle preview buffer count to reduce preview latency
+- Preview tuning Phase 1.6 is now applied in code after continued real-device lag:
+  - idle preview source size `320x240`
+  - removed per-frame Picamera2 `RGB -> BGR` conversion in the idle/video preview path
+- Idle preview tuning has now been verified on the real Raspberry Pi after redeploy:
+  - preview feels smooth enough for live camera usage on `Capture`
+  - color rendering on the preview feed is now acceptable
+- Preview sync Phase 2 is now implemented in code:
+  - Pi preview socket packet is now `metadata + jpeg` instead of `jpeg only`
+  - preview metadata now carries `frame_id`, `timestamp`, `session_id`, and `mode`
+  - app now parses preview metadata and only draws live pose border/skeleton when preview and inference frames match or near-match
+  - when preview is live but AI has not caught up, the app now shows a syncing message instead of drawing stale overlay on the wrong frame
+  - this is a coordinated rollout change, so the updated app and updated Pi agent must be deployed together
 - `Processing` is now backend-only for the default flow and no longer falls back to local mock finalize behavior.
 - Result screens now share one backend result source of truth through `ResultApi`.
 - `Result` route now opens backend sessions only instead of accepting demo result objects on the main path.
@@ -160,6 +193,8 @@ The action items from the previous snapshot are now completed:
 - `python -m compileall backend/pi_agent`
 - `backend\\.venv\\Scripts\\python.exe -m py_compile backend\\workers\\zmq_worker.py`
 - `Set-Location backend\\tests; ..\\.venv\\Scripts\\python.exe -m unittest -v test_zmq_worker.py`
+- `backend\\.venv\\Scripts\\python.exe -m py_compile backend\\pi_agent\\pi_preview.py backend\\pi_agent\\pi_capture.py backend\\pi_agent\\pi_agent.py`
+- `backend\\.venv\\Scripts\\python.exe -m unittest -v backend.tests.test_preview_socket_protocol backend.tests.test_zmq_worker`
 - local backend database check confirmed newest canonical run:
   - command `7`
   - session `sess_000008`

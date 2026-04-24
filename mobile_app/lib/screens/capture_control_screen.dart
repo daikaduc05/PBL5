@@ -52,6 +52,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
   ResultSessionDetail? _liveResultSession;
   ResultFrameItem? _latestInferenceFrame;
   FrameResultDetail? _latestInferenceDetail;
+  _PreviewFrameMetadata? _latestPreviewFrameMetadata;
   String? _liveInferenceMessage;
 
   @override
@@ -300,6 +301,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
         _liveResultSession = null;
         _latestInferenceFrame = null;
         _latestInferenceDetail = null;
+        _latestPreviewFrameMetadata = null;
         _liveInferenceMessage = 'Waiting for the worker to produce the first inference frame...';
       });
       _startRecordingTimer();
@@ -377,6 +379,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
         _isRecording = false;
         _activeRecordingDraft = null;
         _latestInferenceDetail = null;
+        _latestPreviewFrameMetadata = null;
       });
 
       if (!autoTriggered) {
@@ -543,20 +546,26 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
     final commandType = mode == CaptureMode.image
         ? 'capture_photo'
         : 'start_recording';
+    final commandPayload = <String, Object>{
+      'frames_dir': BackendConfig.defaultPiFramesDir,
+      'zmq_host': _resolveZmqHost(settings.serverAddress),
+      'zmq_port': BackendConfig.defaultZmqPort,
+      'capture_source': 'auto',
+      'capture_mode': mode.name,
+      'target_duration_seconds': targetDurationSeconds,
+      'actual_duration_seconds': actualDurationSeconds,
+      'source': 'mobile_app',
+    };
+    if (mode == CaptureMode.video) {
+      commandPayload['camera_fps'] = 8;
+      commandPayload['camera_width'] = 640;
+      commandPayload['camera_height'] = 480;
+    }
     final command = await _api.createDeviceCommand(
       deviceId: captureDevice.id,
       sessionId: session.sessionId,
       commandType: commandType,
-      commandPayload: {
-        'frames_dir': BackendConfig.defaultPiFramesDir,
-        'zmq_host': _resolveZmqHost(settings.serverAddress),
-        'zmq_port': BackendConfig.defaultZmqPort,
-        'capture_source': 'auto',
-        'capture_mode': mode.name,
-        'target_duration_seconds': targetDurationSeconds,
-        'actual_duration_seconds': actualDurationSeconds,
-        'source': 'mobile_app',
-      },
+      commandPayload: commandPayload,
     );
 
     return CaptureSessionDraft(
@@ -623,6 +632,8 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
   Widget _buildCapturePreviewContent() {
     final raspberryPiIp = _raspberryPiIp?.trim();
     final livePoseDetail = _isRecording ? _latestInferenceDetail : null;
+    final shouldRenderLiveOverlay = _shouldRenderLivePoseOverlay(livePoseDetail);
+    final overlayMessage = _buildLiveOverlayMessage(livePoseDetail);
 
     return Stack(
       fit: StackFit.expand,
@@ -630,6 +641,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
         _PiPreviewSocketView(
           raspberryPiIp: raspberryPiIp,
           port: BackendConfig.defaultPiPreviewSocketPort,
+          onMetadataChanged: _handlePreviewFrameMetadataChanged,
         ),
         DecoratedBox(
           decoration: BoxDecoration(
@@ -644,7 +656,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
             ),
           ),
         ),
-        if (livePoseDetail?.poseOverlay?.hasDetections == true)
+        if (shouldRenderLiveOverlay)
           Positioned.fill(
             child: _LivePoseMetadataOverlay(
               detail: livePoseDetail!,
@@ -657,12 +669,93 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
             child: _InferenceOverlay(
               frame: _latestInferenceFrame,
               detail: _latestInferenceDetail,
-              message: _liveInferenceMessage,
+              message: overlayMessage,
               session: _liveResultSession,
             ),
           ),
       ],
     );
+  }
+
+  void _handlePreviewFrameMetadataChanged(_PreviewFrameMetadata? metadata) {
+    if (!mounted) {
+      return;
+    }
+
+    if (!_isRecording) {
+      _latestPreviewFrameMetadata = metadata;
+      return;
+    }
+
+    final current = _latestPreviewFrameMetadata;
+    final isSameMetadata = current?.frameId == metadata?.frameId &&
+        current?.sessionId == metadata?.sessionId &&
+        current?.mode == metadata?.mode;
+    if (isSameMetadata) {
+      return;
+    }
+
+    setState(() {
+      _latestPreviewFrameMetadata = metadata;
+    });
+  }
+
+  bool _shouldRenderLivePoseOverlay(FrameResultDetail? detail) {
+    if (!_isRecording || detail == null) {
+      return false;
+    }
+
+    final overlay = detail.poseOverlay;
+    if (overlay == null || !overlay.hasDetections) {
+      return false;
+    }
+
+    final previewMetadata = _latestPreviewFrameMetadata;
+    if (previewMetadata == null || !previewMetadata.isRecordingPreview) {
+      return false;
+    }
+
+    if (previewMetadata.sessionId != null && previewMetadata.sessionId != detail.sessionId) {
+      return false;
+    }
+
+    final previewFrameId = previewMetadata.frameId;
+    if (previewFrameId == null) {
+      return false;
+    }
+
+    return (previewFrameId - detail.frameId).abs() <= 1;
+  }
+
+  String? _buildLiveOverlayMessage(FrameResultDetail? detail) {
+    if (!_isRecording) {
+      return _liveInferenceMessage;
+    }
+
+    if (detail == null) {
+      return _liveInferenceMessage;
+    }
+
+    final previewMetadata = _latestPreviewFrameMetadata;
+    if (previewMetadata == null || !previewMetadata.isRecordingPreview) {
+      return 'Preview live, AI syncing...';
+    }
+
+    if (previewMetadata.sessionId != null && previewMetadata.sessionId != detail.sessionId) {
+      return 'Preview live, waiting for the current session overlay...';
+    }
+
+    final previewFrameId = previewMetadata.frameId;
+    if (previewFrameId == null) {
+      return 'Preview live, AI syncing...';
+    }
+
+    final frameDiff = (previewFrameId - detail.frameId).abs();
+    if (frameDiff > 1) {
+      return 'Preview live, AI syncing frame ${detail.frameId}...';
+    }
+
+    return _liveInferenceMessage;
   }
 
   @override
@@ -1043,10 +1136,12 @@ class _PreviewPlaceholder extends StatelessWidget {
 class _PiPreviewSocketView extends StatefulWidget {
   final String? raspberryPiIp;
   final int port;
+  final ValueChanged<_PreviewFrameMetadata?>? onMetadataChanged;
 
   const _PiPreviewSocketView({
     required this.raspberryPiIp,
     required this.port,
+    this.onMetadataChanged,
   });
 
   @override
@@ -1090,6 +1185,7 @@ class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
   void _connectIfPossible() {
     final raspberryPiIp = widget.raspberryPiIp?.trim();
     if (raspberryPiIp == null || raspberryPiIp.isEmpty) {
+      widget.onMetadataChanged?.call(null);
       setState(() {
         _statusMessage = 'Set the Raspberry Pi IP in Settings so the app can open the live preview socket.';
       });
@@ -1187,17 +1283,44 @@ class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
         return;
       }
 
-      final length = (_buffer[0] << 24) |
+      final metadataLength = (_buffer[0] << 24) |
           (_buffer[1] << 16) |
           (_buffer[2] << 8) |
           _buffer[3];
 
-      if (_buffer.length < 4 + length) {
+      if (_buffer.length < 4 + metadataLength + 4) {
         return;
       }
 
-      final frameBytes = Uint8List.fromList(_buffer.sublist(4, 4 + length));
-      _buffer.removeRange(0, 4 + length);
+      final metadataStart = 4;
+      final metadataEnd = metadataStart + metadataLength;
+      _PreviewFrameMetadata metadata;
+      try {
+        final metadataJson = utf8.decode(_buffer.sublist(metadataStart, metadataEnd));
+        final metadataPayload = json.decode(metadataJson);
+        if (metadataPayload is! Map) {
+          _handlePreviewFailure('Invalid preview metadata payload.');
+          return;
+        }
+        metadata = _PreviewFrameMetadata.fromJson(Map<String, dynamic>.from(metadataPayload));
+      } on FormatException {
+        _handlePreviewFailure('Invalid preview metadata packet.');
+        return;
+      }
+
+      final imageLengthStart = metadataEnd;
+      final imageDataStart = imageLengthStart + 4;
+      final imageLength = (_buffer[imageLengthStart] << 24) |
+          (_buffer[imageLengthStart + 1] << 16) |
+          (_buffer[imageLengthStart + 2] << 8) |
+          _buffer[imageLengthStart + 3];
+
+      if (_buffer.length < imageDataStart + imageLength) {
+        return;
+      }
+
+      final frameBytes = Uint8List.fromList(_buffer.sublist(imageDataStart, imageDataStart + imageLength));
+      _buffer.removeRange(0, imageDataStart + imageLength);
 
       if (!mounted) {
         return;
@@ -1208,6 +1331,7 @@ class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
         _reconnectAttempt = 0;
         _statusMessage = null;
       });
+      widget.onMetadataChanged?.call(metadata);
     }
   }
 
@@ -1223,6 +1347,7 @@ class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
     _socketSubscription?.cancel();
     _socketSubscription = null;
     _closeSocket();
+    widget.onMetadataChanged?.call(null);
 
     if (!mounted) {
       return;
@@ -1278,6 +1403,7 @@ class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
     _handshakeComplete = false;
     _reconnectAttempt = 0;
     _statusMessage = null;
+    widget.onMetadataChanged?.call(null);
   }
 
   void _closeSocket() {
@@ -1378,6 +1504,48 @@ class _PiPreviewSocketViewState extends State<_PiPreviewSocketView> {
       ],
     );
   }
+}
+
+class _PreviewFrameMetadata {
+  final int? frameId;
+  final double? timestamp;
+  final String? sessionId;
+  final String mode;
+
+  const _PreviewFrameMetadata({
+    required this.frameId,
+    required this.timestamp,
+    required this.sessionId,
+    required this.mode,
+  });
+
+  bool get isRecordingPreview => mode == 'recording_preview';
+
+  factory _PreviewFrameMetadata.fromJson(Map<String, dynamic> json) {
+    return _PreviewFrameMetadata(
+      frameId: _parseInt(json['frame_id']),
+      timestamp: _parseDouble(json['timestamp']),
+      sessionId: json['session_id'] as String?,
+      mode: json['mode'] as String? ?? 'unknown',
+    );
+  }
+}
+
+int? _parseInt(Object? value) {
+  return switch (value) {
+    int() => value,
+    String() => int.tryParse(value),
+    _ => null,
+  };
+}
+
+double? _parseDouble(Object? value) {
+  return switch (value) {
+    double() => value,
+    int() => value.toDouble(),
+    String() => double.tryParse(value),
+    _ => null,
+  };
 }
 
 class _LivePoseMetadataOverlay extends StatelessWidget {

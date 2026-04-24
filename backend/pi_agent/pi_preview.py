@@ -18,11 +18,64 @@ PREVIEW_SOCKET_HANDSHAKE_OK = b"POSETRACK_PREVIEW_OK\n"
 DEFAULT_PREVIEW_SOCKET_PORT = 8082
 
 
+def _normalize_preview_metadata(
+    metadata: dict[str, object] | None,
+    updated_at: float | None,
+) -> dict[str, object]:
+    payload = dict(metadata) if metadata is not None else {}
+
+    frame_id = payload.get("frame_id")
+    if frame_id is not None:
+        try:
+            frame_id = int(frame_id)
+        except (TypeError, ValueError):
+            frame_id = None
+
+    timestamp = payload.get("timestamp")
+    if timestamp is not None:
+        try:
+            timestamp = float(timestamp)
+        except (TypeError, ValueError):
+            timestamp = None
+    if timestamp is None:
+        timestamp = updated_at
+
+    session_id = payload.get("session_id")
+    if session_id is not None:
+        session_id = str(session_id)
+
+    mode = payload.get("mode")
+    if mode is None:
+        mode = "unknown"
+    else:
+        mode = str(mode)
+
+    return {
+        "frame_id": frame_id,
+        "timestamp": timestamp,
+        "session_id": session_id,
+        "mode": mode,
+    }
+
+
+def _build_preview_socket_packet(frame_bytes: bytes, metadata: dict[str, object] | None) -> bytes:
+    normalized_metadata = _normalize_preview_metadata(metadata, None)
+    metadata_bytes = json.dumps(
+        normalized_metadata,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    metadata_header = len(metadata_bytes).to_bytes(4, byteorder="big", signed=False)
+    frame_header = len(frame_bytes).to_bytes(4, byteorder="big", signed=False)
+    return metadata_header + metadata_bytes + frame_header + frame_bytes
+
+
 @dataclass
 class PreviewFrameSnapshot:
     frame_bytes: bytes | None
     content_type: str
     updated_at: float | None
+    metadata: dict[str, object]
 
 
 class PreviewFrameStore:
@@ -31,12 +84,27 @@ class PreviewFrameStore:
         self._frame_bytes: bytes | None = None
         self._content_type = "image/jpeg"
         self._updated_at: float | None = None
+        self._metadata: dict[str, object] = _normalize_preview_metadata(None, None)
 
-    def update(self, frame_bytes: bytes, content_type: str = "image/jpeg") -> None:
+    def update(
+        self,
+        frame_bytes: bytes,
+        content_type: str = "image/jpeg",
+        metadata: dict[str, object] | None = None,
+    ) -> PreviewFrameSnapshot:
+        updated_at = time.time()
+        normalized_metadata = _normalize_preview_metadata(metadata, updated_at)
         with self._lock:
             self._frame_bytes = frame_bytes
             self._content_type = content_type
-            self._updated_at = time.time()
+            self._updated_at = updated_at
+            self._metadata = normalized_metadata
+            return PreviewFrameSnapshot(
+                frame_bytes=self._frame_bytes,
+                content_type=self._content_type,
+                updated_at=self._updated_at,
+                metadata=dict(self._metadata),
+            )
 
     def snapshot(self) -> PreviewFrameSnapshot:
         with self._lock:
@@ -44,6 +112,7 @@ class PreviewFrameStore:
                 frame_bytes=self._frame_bytes,
                 content_type=self._content_type,
                 updated_at=self._updated_at,
+                metadata=dict(self._metadata),
             )
 
 
@@ -70,14 +139,14 @@ class PreviewSocketClient:
     def start(self) -> None:
         self._thread.start()
 
-    def offer(self, frame_bytes: bytes) -> None:
+    def offer(self, packet_bytes: bytes) -> None:
         if self._closed:
             return
 
         try:
             if self._queue.full():
                 self._queue.get_nowait()
-            self._queue.put_nowait(frame_bytes)
+            self._queue.put_nowait(packet_bytes)
         except queue.Full:
             return
 
@@ -105,13 +174,11 @@ class PreviewSocketClient:
     def _send_loop(self) -> None:
         try:
             while True:
-                frame_bytes = self._queue.get()
-                if frame_bytes is None:
+                packet_bytes = self._queue.get()
+                if packet_bytes is None:
                     return
 
-                header = len(frame_bytes).to_bytes(4, byteorder="big", signed=False)
-                self._conn.sendall(header)
-                self._conn.sendall(frame_bytes)
+                self._conn.sendall(packet_bytes)
         except OSError as exc:
             if self._logger is not None:
                 self._logger(
@@ -135,12 +202,12 @@ class PreviewSocketHub:
         with self._lock:
             self._clients.discard(client)
 
-    def broadcast(self, frame_bytes: bytes) -> None:
+    def broadcast(self, packet_bytes: bytes) -> None:
         with self._lock:
             clients = list(self._clients)
 
         for client in clients:
-            client.offer(frame_bytes)
+            client.offer(packet_bytes)
 
     def close(self) -> None:
         with self._lock:
@@ -226,7 +293,7 @@ class PreviewSocketServer:
 
         snapshot = _PREVIEW_STORE.snapshot()
         if snapshot.frame_bytes is not None:
-            client.offer(snapshot.frame_bytes)
+            client.offer(_build_preview_socket_packet(snapshot.frame_bytes, snapshot.metadata))
 
         client.start()
 
@@ -270,9 +337,19 @@ class LivePreviewServer:
             self._logger("Live preview server stopped.")
 
 
-def update_preview_frame(frame_bytes: bytes, content_type: str = "image/jpeg") -> None:
-    _PREVIEW_STORE.update(frame_bytes=frame_bytes, content_type=content_type)
-    _PREVIEW_SOCKET_HUB.broadcast(frame_bytes)
+def update_preview_frame(
+    frame_bytes: bytes,
+    content_type: str = "image/jpeg",
+    metadata: dict[str, object] | None = None,
+) -> None:
+    snapshot = _PREVIEW_STORE.update(
+        frame_bytes=frame_bytes,
+        content_type=content_type,
+        metadata=metadata,
+    )
+    _PREVIEW_SOCKET_HUB.broadcast(
+        _build_preview_socket_packet(snapshot.frame_bytes or b"", snapshot.metadata)
+    )
 
 
 def start_preview_server(
@@ -318,6 +395,9 @@ def _build_preview_handler(store: PreviewFrameStore, socket_port: int):
                         "success": True,
                         "ready": snapshot.frame_bytes is not None,
                         "updated_at": snapshot.updated_at,
+                        "frame_id": snapshot.metadata.get("frame_id"),
+                        "session_id": snapshot.metadata.get("session_id"),
+                        "mode": snapshot.metadata.get("mode"),
                         "socket_port": socket_port,
                         "socket_clients": _PREVIEW_SOCKET_HUB.client_count(),
                     },

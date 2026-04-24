@@ -15,8 +15,8 @@ LogFn = Callable[[str], None]
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png")
 DEFAULT_PREVIEW_MAX_WIDTH = int(os.getenv("POSETRACK_PREVIEW_MAX_WIDTH", "480"))
 DEFAULT_PREVIEW_MAX_HEIGHT = int(os.getenv("POSETRACK_PREVIEW_MAX_HEIGHT", "360"))
-DEFAULT_PREVIEW_JPEG_QUALITY = int(os.getenv("POSETRACK_PREVIEW_JPEG_QUALITY", "55"))
-DEFAULT_PREVIEW_STREAM_FPS = float(os.getenv("POSETRACK_PREVIEW_STREAM_FPS", "3"))
+DEFAULT_PREVIEW_JPEG_QUALITY = int(os.getenv("POSETRACK_PREVIEW_JPEG_QUALITY", "45"))
+DEFAULT_PREVIEW_STREAM_FPS = float(os.getenv("POSETRACK_PREVIEW_STREAM_FPS", "6"))
 
 
 def has_replay_frames(frames_dir: str | None) -> bool:
@@ -138,8 +138,18 @@ def capture_photo_to_zmq(
                 ) from picamera2_error
             raise RuntimeError("Camera did not return a frame for capture_photo.")
 
+        frame_timestamp = time.time()
         frame_bytes = _encode_frame_to_jpeg(cv2, frame)
-        _publish_preview_frame(cv2, frame)
+        _publish_preview_frame(
+            cv2,
+            frame,
+            metadata=_build_preview_metadata(
+                frame_id=1,
+                session_id=session_id,
+                mode="capture_photo_preview",
+                timestamp=frame_timestamp,
+            ),
+        )
         _send_frame_bytes(
             socket=socket,
             session_id=session_id,
@@ -149,6 +159,7 @@ def capture_photo_to_zmq(
             message_type="capture_photo",
             filename="camera_photo.jpg",
             source="camera",
+            timestamp=frame_timestamp,
         )
         _log(logger, "Camera photo captured and sent.")
         return 1
@@ -232,12 +243,19 @@ def capture_video_to_zmq(
 
             read_failures = 0
             frame_id += 1
+            frame_timestamp = time.time()
             frame_bytes = _encode_frame_to_jpeg(cv2, frame)
             preview_sent_at = _publish_preview_frame(
                 cv2,
                 frame,
                 last_sent_at=preview_sent_at,
                 max_fps=DEFAULT_PREVIEW_STREAM_FPS,
+                metadata=_build_preview_metadata(
+                    frame_id=frame_id,
+                    session_id=session_id,
+                    mode="recording_preview",
+                    timestamp=frame_timestamp,
+                ),
             )
             _send_frame_bytes(
                 socket=socket,
@@ -248,6 +266,7 @@ def capture_video_to_zmq(
                 message_type="frame_stream_camera",
                 filename=f"camera_frame_{frame_id}.jpg",
                 source="camera",
+                timestamp=frame_timestamp,
             )
             _log(logger, f"Live camera frame {frame_id} sent.")
 
@@ -304,6 +323,8 @@ def stream_idle_preview(
     )
     frame_interval_seconds = 1.0 / max(fps, 1.0)
 
+    idle_frame_id = 0
+
     try:
         _warm_up_camera(camera, warmup_seconds)
 
@@ -311,7 +332,16 @@ def stream_idle_preview(
             loop_started_at = time.monotonic()
             success, frame = camera.read()
             if success and frame is not None:
-                _publish_preview_frame(cv2, frame)
+                idle_frame_id += 1
+                _publish_preview_frame(
+                    cv2,
+                    frame,
+                    metadata=_build_preview_metadata(
+                        frame_id=idle_frame_id,
+                        session_id=None,
+                        mode="idle_preview",
+                    ),
+                )
 
             remaining_sleep = frame_interval_seconds - (time.monotonic() - loop_started_at)
             if remaining_sleep > 0:
@@ -357,12 +387,13 @@ def _send_frame_bytes(
     message_type: str,
     filename: str,
     source: str,
+    timestamp: float | None = None,
 ) -> None:
     metadata = {
         "session_id": session_id,
         "device_id": device_id,
         "frame_id": frame_id,
-        "timestamp": time.time(),
+        "timestamp": time.time() if timestamp is None else float(timestamp),
         "message_type": message_type,
         "filename": filename,
         "source": source,
@@ -465,6 +496,8 @@ def _open_opencv_camera(
         camera.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
     if fps is not None:
         camera.set(cv2.CAP_PROP_FPS, fps)
+    if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
+        camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     return camera
 
@@ -506,8 +539,18 @@ def _capture_photo_with_picamera2_to_zmq(
         if frame is None:
             raise RuntimeError("Picamera2 returned an empty frame for capture_photo.")
 
+        frame_timestamp = time.time()
         frame_bytes = _encode_frame_to_jpeg(cv2, frame)
-        _publish_preview_frame(cv2, frame)
+        _publish_preview_frame(
+            cv2,
+            frame,
+            metadata=_build_preview_metadata(
+                frame_id=1,
+                session_id=session_id,
+                mode="capture_photo_preview",
+                timestamp=frame_timestamp,
+            ),
+        )
         _send_frame_bytes(
             socket=socket,
             session_id=session_id,
@@ -517,6 +560,7 @@ def _capture_photo_with_picamera2_to_zmq(
             message_type="capture_photo",
             filename="camera_photo.jpg",
             source="camera",
+            timestamp=frame_timestamp,
         )
         _log(logger, "Picamera2 photo captured and sent.")
         return 1
@@ -580,12 +624,19 @@ def _capture_video_with_picamera2_to_zmq(
                 raise RuntimeError("Picamera2 returned an empty frame during video capture.")
 
             frame_id += 1
+            frame_timestamp = time.time()
             frame_bytes = _encode_frame_to_jpeg(cv2, frame)
             preview_sent_at = _publish_preview_frame(
                 cv2,
                 frame,
                 last_sent_at=preview_sent_at,
                 max_fps=DEFAULT_PREVIEW_STREAM_FPS,
+                metadata=_build_preview_metadata(
+                    frame_id=frame_id,
+                    session_id=session_id,
+                    mode="recording_preview",
+                    timestamp=frame_timestamp,
+                ),
             )
             _send_frame_bytes(
                 socket=socket,
@@ -596,6 +647,7 @@ def _capture_video_with_picamera2_to_zmq(
                 message_type="frame_stream_camera",
                 filename=f"camera_frame_{frame_id}.jpg",
                 source="camera",
+                timestamp=frame_timestamp,
             )
             _log(logger, f"Picamera2 live camera frame {frame_id} sent.")
 
@@ -630,6 +682,7 @@ def _stream_idle_preview_with_picamera2(
     cv2 = _import_cv2()
     picamera2 = None
     frame_interval_seconds = 1.0 / max(fps, 1.0)
+    idle_frame_id = 0
 
     try:
         picamera2 = _open_picamera2_camera(
@@ -644,7 +697,7 @@ def _stream_idle_preview_with_picamera2(
                 "format": "RGB888",
             },
             controls={"FrameDurationLimits": (frame_duration, frame_duration)},
-            buffer_count=4,
+            buffer_count=2,
         )
         picamera2.configure(configuration)
         picamera2.start()
@@ -655,7 +708,16 @@ def _stream_idle_preview_with_picamera2(
             loop_started_at = time.monotonic()
             frame = _normalize_frame_for_jpeg(cv2, picamera2.capture_array("main"))
             if frame is not None:
-                _publish_preview_frame(cv2, frame)
+                idle_frame_id += 1
+                _publish_preview_frame(
+                    cv2,
+                    frame,
+                    metadata=_build_preview_metadata(
+                        frame_id=idle_frame_id,
+                        session_id=None,
+                        mode="idle_preview",
+                    ),
+                )
 
             remaining_sleep = frame_interval_seconds - (time.monotonic() - loop_started_at)
             if remaining_sleep > 0:
@@ -685,8 +747,10 @@ def _normalize_frame_for_jpeg(cv2, frame):
 
     if len(frame.shape) == 3:
         channels = frame.shape[2]
+        # Picamera2 RGB888 arrays are already laid out as BGR for OpenCV users,
+        # so a per-frame RGB->BGR conversion here only adds latency.
         if channels == 3:
-            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            return frame
         if channels == 4:
             return cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
 
@@ -721,6 +785,7 @@ def _publish_preview_frame(
     *,
     last_sent_at: float | None = None,
     max_fps: float | None = None,
+    metadata: dict[str, object] | None = None,
 ) -> float:
     now = time.monotonic()
     if max_fps is not None and max_fps > 0 and last_sent_at is not None:
@@ -728,8 +793,26 @@ def _publish_preview_frame(
         if now - last_sent_at < minimum_interval_seconds:
             return last_sent_at
 
-    update_preview_frame(frame_bytes=_encode_preview_frame_to_jpeg(cv2, frame))
+    update_preview_frame(
+        frame_bytes=_encode_preview_frame_to_jpeg(cv2, frame),
+        metadata=metadata,
+    )
     return now
+
+
+def _build_preview_metadata(
+    *,
+    frame_id: int | None,
+    session_id: str | None,
+    mode: str,
+    timestamp: float | None = None,
+) -> dict[str, object]:
+    return {
+        "frame_id": frame_id,
+        "timestamp": time.time() if timestamp is None else float(timestamp),
+        "session_id": session_id,
+        "mode": mode,
+    }
 
 
 def _encode_preview_frame_to_jpeg(cv2, frame) -> bytes:

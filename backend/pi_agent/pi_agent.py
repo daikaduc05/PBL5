@@ -25,12 +25,14 @@ DEFAULT_BACKEND = os.getenv("POSETRACK_BACKEND", "http://localhost:8002")
 POLL_INTERVAL = 3
 REQUEST_TIMEOUT = 5
 DEFAULT_CAMERA_INDEX = int(os.getenv("POSETRACK_CAMERA_INDEX", "0"))
-DEFAULT_CAMERA_FPS = float(os.getenv("POSETRACK_CAMERA_FPS", "10"))
+DEFAULT_CAMERA_FPS = float(os.getenv("POSETRACK_CAMERA_FPS", "8"))
 DEFAULT_CAMERA_WARMUP_SECONDS = float(os.getenv("POSETRACK_CAMERA_WARMUP", "1.0"))
 DEFAULT_PREVIEW_HOST = os.getenv("POSETRACK_PREVIEW_HOST", "0.0.0.0")
 DEFAULT_PREVIEW_PORT = int(os.getenv("POSETRACK_PREVIEW_PORT", "8081"))
 DEFAULT_PREVIEW_SOCKET_PORT = int(os.getenv("POSETRACK_PREVIEW_SOCKET_PORT", "8082"))
-DEFAULT_IDLE_PREVIEW_FPS = float(os.getenv("POSETRACK_IDLE_PREVIEW_FPS", "3"))
+DEFAULT_IDLE_PREVIEW_FPS = float(os.getenv("POSETRACK_IDLE_PREVIEW_FPS", "6"))
+DEFAULT_IDLE_PREVIEW_WIDTH = int(os.getenv("POSETRACK_IDLE_PREVIEW_WIDTH", "320"))
+DEFAULT_IDLE_PREVIEW_HEIGHT = int(os.getenv("POSETRACK_IDLE_PREVIEW_HEIGHT", "240"))
 
 
 @dataclass
@@ -244,6 +246,8 @@ def _run_idle_preview_loop() -> None:
     try:
         stream_idle_preview(
             camera_index=DEFAULT_CAMERA_INDEX,
+            width=DEFAULT_IDLE_PREVIEW_WIDTH,
+            height=DEFAULT_IDLE_PREVIEW_HEIGHT,
             fps=DEFAULT_IDLE_PREVIEW_FPS,
             warmup_seconds=DEFAULT_CAMERA_WARMUP_SECONDS,
             stop_event=idle_preview.stop_event,
