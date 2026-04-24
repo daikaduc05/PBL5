@@ -13,6 +13,27 @@ import torch.nn as nn
 from torchvision import models
 from ultralytics import YOLO
 
+try:
+    from .form_checker import (
+        AWAITING_REP_MESSAGE,
+        BAD_FORM,
+        DEFAULT_INVALID_MESSAGE,
+        GOOD_FORM,
+        SquatFormTracker,
+        UNKNOWN,
+        compute_squat_angles_stable,
+    )
+except ImportError:
+    from form_checker import (
+        AWAITING_REP_MESSAGE,
+        BAD_FORM,
+        DEFAULT_INVALID_MESSAGE,
+        GOOD_FORM,
+        SquatFormTracker,
+        UNKNOWN,
+        compute_squat_angles_stable,
+    )
+
 
 logger = logging.getLogger(__name__)
 
@@ -478,12 +499,14 @@ def decode_heatmaps(
     center: np.ndarray,
     scale: np.ndarray,
     pixel_std: int = 200,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     num_joints, height, width = heatmaps.shape
     coords = np.zeros((num_joints, 2), dtype=np.float32)
+    scores = np.zeros(num_joints, dtype=np.float32)
 
     for joint_index in range(num_joints):
         heatmap = heatmaps[joint_index]
+        scores[joint_index] = float(np.max(heatmap))
         idx = np.argmax(heatmap)
         px, py = idx % width, idx // width
 
@@ -521,7 +544,7 @@ def decode_heatmaps(
         point = np.array([coords[joint_index][0], coords[joint_index][1], 1.0])
         coords[joint_index] = inv_trans @ point
 
-    return coords
+    return coords, scores
 
 
 # COCO-17 keypoint indices used by the pose model
@@ -554,58 +577,29 @@ COCO_SKELETON_EDGES: list[tuple[int, int]] = [
 ]
 
 
-def calculate_angle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
-    a = np.asarray(a, dtype=np.float32)
-    b = np.asarray(b, dtype=np.float32)
-    c = np.asarray(c, dtype=np.float32)
-    radians = np.arctan2(c[1] - b[1], c[0] - b[0]) - np.arctan2(a[1] - b[1], a[0] - b[0])
-    angle = float(np.abs(radians * 180.0 / np.pi))
-    if angle > 180.0:
-        angle = 360.0 - angle
-    return angle
+def _get_form_color(form_status: str | None) -> tuple[int, int, int]:
+    if form_status == GOOD_FORM:
+        return (0, 200, 0)
+    if form_status == BAD_FORM:
+        return (0, 0, 255)
+    return (0, 215, 255)
 
 
-def compute_squat_angles(keypoints: np.ndarray) -> dict[str, float]:
-    shoulder = keypoints[KP_R_SHOULDER]
-    hip = keypoints[KP_R_HIP]
-    knee = keypoints[KP_R_KNEE]
-    ankle = keypoints[KP_R_ANKLE]
-    return {
-        "knee": round(calculate_angle(hip, knee, ankle), 2),
-        "hip": round(calculate_angle(shoulder, hip, knee), 2),
-    }
+def _get_form_label(form_status: str | None) -> str:
+    if form_status == GOOD_FORM:
+        return "GOOD"
+    if form_status == BAD_FORM:
+        return "BAD"
+    return "UNKNOWN"
 
 
-class SquatTracker:
-    """Counts squat reps and tracks min/max joint angles per rep."""
-
-    def __init__(self, up_threshold: float = 169.0, down_threshold: float = 90.0) -> None:
-        self.up_threshold = up_threshold
-        self.down_threshold = down_threshold
-        self.counter = 0
-        self.stage: str | None = None
-        self._knee_window: list[float] = []
-        self._hip_window: list[float] = []
-        self.last_min_knee = 0.0
-        self.last_max_knee = 0.0
-        self.last_min_hip = 0.0
-        self.last_max_hip = 0.0
-
-    def update(self, knee_angle: float, hip_angle: float) -> None:
-        self._knee_window.append(knee_angle)
-        self._hip_window.append(hip_angle)
-
-        if knee_angle > self.up_threshold:
-            self.stage = "up"
-        if knee_angle <= self.down_threshold and self.stage == "up":
-            self.stage = "down"
-            self.counter += 1
-            self.last_min_knee = min(self._knee_window)
-            self.last_max_knee = max(self._knee_window)
-            self.last_min_hip = min(self._hip_window)
-            self.last_max_hip = max(self._hip_window)
-            self._knee_window.clear()
-            self._hip_window.clear()
+def _select_primary_detection_index(results: list[dict[str, Any]]) -> int | None:
+    if not results:
+        return None
+    return max(
+        range(len(results)),
+        key=lambda index: float(results[index].get("bbox", [0, 0, 0, 0, 0])[-1]),
+    )
 
 
 def visualize_pose(
@@ -613,20 +607,12 @@ def visualize_pose(
     results: list[dict[str, Any]],
     save_path: str | Path | None = None,
 ) -> np.ndarray:
-    colors = [
-        (255, 0, 0),
-        (0, 255, 0),
-        (0, 0, 255),
-        (255, 255, 0),
-        (255, 0, 255),
-        (0, 255, 255),
-    ]
-
     canvas = load_image(image)
 
-    for index, result in enumerate(results):
+    for result in results:
         keypoints = result["keypoints"]
-        color = colors[index % len(colors)]
+        color = _get_form_color(result.get("form_status", UNKNOWN))
+        status_label = _get_form_label(result.get("form_status", UNKNOWN))
 
         for joint_start, joint_end in COCO_SKELETON_EDGES:
             pt1 = tuple(keypoints[joint_start].astype(int))
@@ -640,7 +626,7 @@ def visualize_pose(
         cv2.rectangle(canvas, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
         cv2.putText(
             canvas,
-            f"{score:.2f}",
+            f"{status_label} {score:.2f}",
             (int(x1), max(0, int(y1) - 8)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.5,
@@ -650,8 +636,13 @@ def visualize_pose(
 
         angles = result.get("angles")
         if angles is not None:
-            knee_pt = tuple(keypoints[KP_R_KNEE].astype(int))
-            hip_pt = tuple(keypoints[KP_R_HIP].astype(int))
+            side_used = result.get("side_used") or "right"
+            if side_used == "left":
+                knee_pt = tuple(keypoints[KP_L_KNEE].astype(int))
+                hip_pt = tuple(keypoints[KP_L_HIP].astype(int))
+            else:
+                knee_pt = tuple(keypoints[KP_R_KNEE].astype(int))
+                hip_pt = tuple(keypoints[KP_R_HIP].astype(int))
             cv2.putText(
                 canvas, f"{angles['knee']:.0f}", knee_pt,
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA,
@@ -680,7 +671,8 @@ def serialize_pose_results(
         raw_bbox = result.get("bbox", [0, 0, 0, 0, 0])
         x1, y1, x2, y2, score = raw_bbox
         keypoints = np.asarray(result.get("keypoints", []), dtype=np.float32)
-        angles = result.get("angles") or {}
+        keypoint_scores = np.asarray(result.get("keypoint_scores", []), dtype=np.float32)
+        angles = result.get("angles")
 
         serialized.append(
             {
@@ -708,10 +700,18 @@ def serialize_pose_results(
                     ]
                     for point in keypoints
                 ],
-                "angles": {
+                "keypoint_scores": [
+                    round(float(score), 6)
+                    for score in keypoint_scores
+                ],
+                "angles": None if angles is None else {
                     key: round(float(value), 3)
                     for key, value in angles.items()
                 },
+                "form_status": result.get("form_status", UNKNOWN),
+                "form_feedback": result.get("form_feedback"),
+                "side_used": result.get("side_used"),
+                "valid_pose": bool(result.get("valid_pose", angles is not None)),
             }
         )
 
@@ -736,11 +736,26 @@ def predict_pose_for_crops(
                 output = output[-1]
 
         heatmaps = output.squeeze(0).detach().cpu().numpy()
-        keypoints = decode_heatmaps(heatmaps, crop["center"], crop["scale"])
+        keypoints, keypoint_scores = decode_heatmaps(heatmaps, crop["center"], crop["scale"])
+        angle_info = compute_squat_angles_stable(keypoints, keypoint_scores)
+        angles = None
+        form_feedback = angle_info["reason"] or DEFAULT_INVALID_MESSAGE
+        if angle_info["valid"]:
+            angles = {
+                "knee": round(float(angle_info["knee"]), 2),
+                "hip": round(float(angle_info["hip"]), 2),
+            }
+            form_feedback = AWAITING_REP_MESSAGE
+
         results.append({
             "bbox": crop["bbox"],
             "keypoints": keypoints,
-            "angles": compute_squat_angles(keypoints),
+            "keypoint_scores": keypoint_scores,
+            "angles": angles,
+            "side_used": angle_info["side_used"],
+            "valid_pose": bool(angle_info["valid"]),
+            "form_status": UNKNOWN,
+            "form_feedback": form_feedback,
         })
 
     return results
@@ -827,7 +842,22 @@ def run_camera_demo(
     frame_count = 0
     last_results: list[dict[str, Any]] = []
     last_fps = 0.0
-    tracker = SquatTracker()
+    tracker = SquatFormTracker()
+    last_form_info: dict[str, Any] = {
+        "rep_count": 0,
+        "stage": None,
+        "status": UNKNOWN,
+        "message": AWAITING_REP_MESSAGE,
+        "knee_angle": None,
+        "hip_angle": None,
+        "knee_min": None,
+        "hip_min": None,
+        "standing_knee": None,
+        "side_used": None,
+        "valid_pose": False,
+        "rep_completed": False,
+        "last_rep_summary": None,
+    }
 
     try:
         while True:
@@ -837,47 +867,82 @@ def run_camera_demo(
 
             frame_count += 1
             should_infer = frame_count % (skip_frames + 1) == 0
+            fresh_results = False
 
             if should_infer:
                 t0 = time.time()
                 try:
-                    _, vis, results = _run_pose_pipeline(
+                    _, _, results = _run_pose_pipeline(
                         frame,
                         checkpoint_path=checkpoint_path,
                         conf=conf,
                     )
                     last_results = results
+                    fresh_results = True
                 except Exception:
                     logger.exception("Pose inference failed for camera frame.")
                     results = last_results
-                    vis = visualize_pose(frame, last_results)
 
                 elapsed = max(time.time() - t0, 1e-6)
                 last_fps = 1.0 / elapsed
             else:
                 results = last_results
-                vis = visualize_pose(frame, last_results) if last_results else frame.copy()
+            
+            if fresh_results:
+                primary_index = _select_primary_detection_index(results)
+                if primary_index is None:
+                    last_form_info = tracker.update({
+                        "valid": False,
+                        "knee": None,
+                        "hip": None,
+                        "side_used": None,
+                        "reason": DEFAULT_INVALID_MESSAGE,
+                    })
+                else:
+                    primary_result = results[primary_index]
+                    angle_info = compute_squat_angles_stable(
+                        primary_result["keypoints"],
+                        primary_result["keypoint_scores"],
+                        preferred_side=tracker.preferred_side,
+                    )
+                    last_form_info = tracker.update(angle_info)
 
-            if results and "angles" in results[0]:
-                a = results[0]["angles"]
-                tracker.update(a["knee"], a["hip"])
+                    primary_result["angles"] = None
+                    if last_form_info["valid_pose"]:
+                        primary_result["angles"] = {
+                            "knee": round(float(last_form_info["knee_angle"]), 2),
+                            "hip": round(float(last_form_info["hip_angle"]), 2),
+                        }
+                    primary_result["side_used"] = last_form_info["side_used"]
+                    primary_result["valid_pose"] = last_form_info["valid_pose"]
+                    primary_result["form_status"] = last_form_info["status"]
+                    primary_result["form_feedback"] = last_form_info["message"]
+                    last_results = results
 
-            cv2.rectangle(vis, (10, 65), (360, 195), (0, 0, 0), -1)
+            vis = visualize_pose(frame, results) if results else frame.copy()
+
+            knee_min_text = "-" if last_form_info["knee_min"] is None else f"{last_form_info['knee_min']:.1f}"
+            hip_min_text = "-" if last_form_info["hip_min"] is None else f"{last_form_info['hip_min']:.1f}"
+            cv2.rectangle(vis, (10, 55), (520, 225), (0, 0, 0), -1)
             cv2.putText(
-                vis, f"Reps: {tracker.counter}  ({tracker.stage or '-'})",
-                (20, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA,
+                vis, f"Reps: {last_form_info['rep_count']}  Stage: {last_form_info['stage'] or '-'}",
+                (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA,
             )
             cv2.putText(
-                vis, f"Knee min: {tracker.last_min_knee:.1f}",
-                (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA,
+                vis, f"Status: {last_form_info['status']}",
+                (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, _get_form_color(last_form_info["status"]), 2, cv2.LINE_AA,
             )
             cv2.putText(
-                vis, f"Hip  min: {tracker.last_min_hip:.1f}",
-                (20, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA,
+                vis, f"Message: {last_form_info['message']}",
+                (20, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA,
+            )
+            cv2.putText(
+                vis, f"Knee min: {knee_min_text}    Hip min: {hip_min_text}",
+                (20, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA,
             )
             cv2.putText(
                 vis, f"FPS: {last_fps:.1f}  Det: {len(results)}",
-                (20, 185), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA,
+                (20, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA,
             )
 
             cv2.imshow(window_name, vis)
