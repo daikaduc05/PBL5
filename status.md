@@ -2,7 +2,7 @@
 
 ## Date
 
-2026-04-24
+2026-04-25
 
 ## Current State
 
@@ -122,6 +122,14 @@ pending -> acknowledged -> running -> completed | failed
   - app now parses preview metadata and only draws live pose border/skeleton when preview and inference frames match or near-match
   - when preview is live but AI has not caught up, the app now shows a syncing message instead of drawing stale overlay on the wrong frame
   - this is a coordinated rollout change, so the updated app and updated Pi agent must be deployed together
+- Preview sync Phase 2 has now been verified on the real runtime stack on 2026-04-25:
+  - verified baseline network config:
+    - Raspberry Pi IP `172.20.10.2`
+    - backend server `172.20.10.5:8002`
+  - idle preview is smooth enough for live usage
+  - video recording still works
+  - live pose border appears while recording on the synced preview feed
+  - processed `Result` output remains correct after recording completes
 - `Processing` is now backend-only for the default flow and no longer falls back to local mock finalize behavior.
 - Result screens now share one backend result source of truth through `ResultApi`.
 - `Result` route now opens backend sessions only instead of accepting demo result objects on the main path.
@@ -182,7 +190,7 @@ The action items from the previous snapshot are now completed:
 
 ## Optional Next Improvements
 
-1. verify `video mode` end-to-end on the live Raspberry Pi camera path
+1. add a small synced label such as `LIVE` or `SYNCED` when overlay is frame-matched
 2. surface `history/{history_id}.result` in a dedicated mobile detail screen if needed
 3. rewrite or retire stale docs such as `OVERVIEW.md`
 4. decide whether the remaining demo-only methods in `MockPoseTrackingService` should be kept for explicit demos or removed entirely

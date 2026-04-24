@@ -13,6 +13,11 @@ Gia su:
 - Raspberry Pi dang chay `pi_agent.py`
 - app Flutter co the chay tren Windows desktop hoac dien thoai
 
+Baseline da verify runtime:
+
+- Raspberry Pi IP: `172.20.10.2`
+- backend server: `172.20.10.5:8002`
+
 ## 1. Thu tu mo terminal
 
 Mo 4 terminal theo thu tu nay:
@@ -90,7 +95,12 @@ Vi du:
 ```powershell
 flutter run -d windows --dart-define=POSETRACK_BACKEND_ADDRESS=192.168.1.10:8002 --dart-define=POSETRACK_PI_DEVICE_CODE=pi-001 --dart-define=POSETRACK_PI_FRAMES_DIR=/home/pi/posetrack/frames --dart-define=POSETRACK_PREVIEW_PORT=8081 --dart-define=POSETRACK_PREVIEW_SOCKET_PORT=8082 --dart-define=POSETRACK_ZMQ_PORT=5555
 ```
+
+Baseline da verify tren Windows desktop:
+
+```powershell
 flutter run -d windows --dart-define=POSETRACK_BACKEND_ADDRESS=172.20.10.5:8002 --dart-define=POSETRACK_PREVIEW_SOCKET_PORT=8082
+```
 ## 6. Chay Pi agent (Raspberry Pi / bash)
 
 Neu Pi chua co moi truong:
@@ -164,9 +174,6 @@ Set-Location .\backend
 ### Terminal 3 - Pi
 
 ```bash
-
-cd /home/pi/PBL5_Project/backend/pi_agent
-/usr/bin/python3 pi_agent.py --backend http://172.20.10.2:8002 --device-name "Raspberry Pi 4B" --device-code pi-001
 cd /home/pi/PBL5_Project/backend/pi_agent
 
 export POSETRACK_IDLE_PREVIEW_FPS=6
@@ -177,6 +184,7 @@ export POSETRACK_PREVIEW_JPEG_QUALITY=45
 export POSETRACK_CAMERA_FPS=8
 
 /usr/bin/python3 pi_agent.py --backend http://172.20.10.5:8002 --device-name "Raspberry Pi 4B" --device-code pi-001
+```
 
 ### Terminal 4 - Flutter
 

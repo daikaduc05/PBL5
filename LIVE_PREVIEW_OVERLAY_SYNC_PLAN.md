@@ -422,14 +422,22 @@ Done criteria:
 
 Checklist:
 
-- [ ] test preview idle tren Pi that
-- [ ] test preview + record tren Pi that
+- [x] test preview idle tren Pi that
+- [x] test preview + record tren Pi that
 - [ ] test squat 3-5 rep
-- [ ] xac nhan:
+- [x] xac nhan:
   - preview muot hon
   - overlay bot lech
   - result screen van dung
   - worker result JSON khong bi vo
+
+Ghi chu verify runtime tren 2026-04-25:
+
+- Pi IP da dung: `172.20.10.2`
+- backend da dung: `172.20.10.5:8002`
+- preview muot
+- live border hien trong luc recording
+- result sau recording van dung
 
 Done criteria:
 
