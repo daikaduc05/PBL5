@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import time
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -826,7 +827,11 @@ def run_camera_demo(
     conf: float = 0.5,
     skip_frames: int = 2,
 ) -> None:
-    cap = cv2.VideoCapture(camera_index)
+    if sys.platform.startswith('win'):
+        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+    else:
+        cap = cv2.VideoCapture(camera_index)
+
     if not cap.isOpened():
         raise RuntimeError(f"Unable to open camera {camera_index}")
 
