@@ -656,12 +656,22 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
             ),
           ),
         ),
-        if (shouldRenderLiveOverlay)
+        if (shouldRenderLiveOverlay) ...[
           Positioned.fill(
             child: _LivePoseMetadataOverlay(
               detail: livePoseDetail!,
             ),
           ),
+          const Positioned(
+            top: 24,
+            left: 24,
+            child: StatusBadge(
+              label: 'SYNCED',
+              color: AppColors.success,
+              icon: Icons.bolt,
+            ),
+          ),
+        ],
         if (_isRecording)
           Positioned(
             right: 16,
