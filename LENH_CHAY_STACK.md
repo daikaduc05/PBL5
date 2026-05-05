@@ -183,8 +183,9 @@ export POSETRACK_PREVIEW_STREAM_FPS=6
 export POSETRACK_PREVIEW_JPEG_QUALITY=45
 export POSETRACK_CAMERA_FPS=8
 
-/usr/bin/python3 pi_agent.py --backend http://172.20.10.5:8002 --device-name "Raspberry Pi 4B" --device-code pi-001
+/usr/bin/python3 pi_agent.py --backend http://172.20.10.2:8002 --device-name "Raspberry Pi 4B" --device-code pi-001
 ```
+/usr/bin/python3 pi_agent.py --backend http://192.168.100.156:8002 --device-name "Raspberry Pi 4B" --device-code pi-001
 
 ### Terminal 4 - Flutter
 

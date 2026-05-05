@@ -64,13 +64,14 @@ class PoseTrackSettings {
 
   factory PoseTrackSettings.fromJson(Map<String, dynamic> json) {
     return PoseTrackSettings(
-      raspberryPiIp:
-          json['raspberry_pi_ip'] as String? ?? '192.168.1.24',
+      raspberryPiIp: json['raspberry_pi_ip'] as String? ?? '192.168.1.24',
       serverAddress:
-          json['server_address'] as String? ?? BackendConfig.defaultServerAddress,
+          json['server_address'] as String? ??
+          BackendConfig.defaultServerAddress,
       defaultMode: _parseCaptureMode(json['default_mode']),
-      defaultDurationSeconds:
-          _parseDurationSeconds(json['default_duration_seconds']),
+      defaultDurationSeconds: _parseDurationSeconds(
+        json['default_duration_seconds'],
+      ),
       autoUpload: json['auto_upload'] as bool? ?? true,
     );
   }
@@ -108,10 +109,7 @@ class ProcessingStage {
   final String title;
   final String description;
 
-  const ProcessingStage({
-    required this.title,
-    required this.description,
-  });
+  const ProcessingStage({required this.title, required this.description});
 }
 
 class PoseAnalysisResult {
@@ -425,10 +423,7 @@ class MockPoseTrackingService {
     try {
       final file = _settingsFile;
       await file.parent.create(recursive: true);
-      await file.writeAsString(
-        jsonEncode(_settings.toJson()),
-        flush: true,
-      );
+      await file.writeAsString(jsonEncode(_settings.toJson()), flush: true);
     } catch (_) {
       // Keep the updated in-memory settings even if file persistence fails.
     }
@@ -455,7 +450,7 @@ class MockPoseTrackingService {
     if (Platform.isLinux) {
       final home = Platform.environment['HOME'] ?? Directory.current.path;
       return File(
-        '$home${separator}.config${separator}posetrack${separator}settings.json',
+        '$home$separator.config${separator}posetrack${separator}settings.json',
       );
     }
 
