@@ -438,7 +438,7 @@ class _MetadataPanel extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Additional fields from the backend result are shown below, followed by the raw JSON payload.',
+            'Additional fields from the backend result are shown below.',
             style: AppTypography.bodyMedium.copyWith(
               color: AppColors.textSecondary,
               fontSize: 14,
@@ -476,26 +476,7 @@ class _MetadataPanel extends StatelessWidget {
                 ),
               ),
             ),
-          const SizedBox(height: 8),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: AppColors.background.withValues(alpha: 0.28),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(
-                color: AppColors.border.withValues(alpha: 0.72),
-              ),
-            ),
-            child: SelectableText(
-              detail.prettyJson,
-              style: AppTypography.bodyMedium.copyWith(
-                color: AppColors.textPrimary,
-                fontSize: 12.5,
-                height: 1.34,
-              ),
-            ),
-          ),
+
         ],
       ),
     );

@@ -1,0 +1,104 @@
+{
+  "session_id": "sess_000021",
+  "frame_id": "1",
+  "device_id": 2,
+  "filename": "camera_photo.jpg",
+  "timestamp": 1777997584.8637204,
+  "message_type": "capture_photo",
+  "input_path": "D:\\TaiLieuNam3_DUT\\HKII\\PBL5\\PBL5\\backend\\workers\\output\\sess_000021\\frame_1.jpg",
+  "pose_output_path": "D:\\TaiLieuNam3_DUT\\HKII\\PBL5\\PBL5\\backend\\workers\\results\\sess_000021\\frame_1_pose.jpg",
+  "success": true,
+  "num_detections": 0,
+  "inference_result": {
+    "success": true,
+    "num_detections": 0,
+    "output_path": "D:\\TaiLieuNam3_DUT\\HKII\\PBL5\\PBL5\\backend\\workers\\results\\sess_000021\\frame_1_pose.jpg",
+    "image_size": {
+      "width": 1296,
+      "height": 972
+    },
+    "skeleton_edges": [
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        1,
+        3
+      ],
+      [
+        2,
+        4
+      ],
+      [
+        5,
+        6
+      ],
+      [
+        5,
+        7
+      ],
+      [
+        7,
+        9
+      ],
+      [
+        6,
+        8
+      ],
+      [
+        8,
+        10
+      ],
+      [
+        5,
+        11
+      ],
+      [
+        6,
+        12
+      ],
+      [
+        11,
+        12
+      ],
+      [
+        11,
+        13
+      ],
+      [
+        13,
+        15
+      ],
+      [
+        12,
+        14
+      ],
+      [
+        14,
+        16
+      ]
+    ],
+    "detections": [],
+    "form_tracking": {
+      "rep_count": 0,
+      "stage": null,
+      "status": "UNKNOWN",
+      "message": "Move back - full body required",
+      "knee_angle": null,
+      "hip_angle": null,
+      "knee_min": null,
+      "hip_min": null,
+      "standing_knee": null,
+      "side_used": null,
+      "valid_pose": false,
+      "rep_completed": false,
+      "last_rep_summary": null
+    },
+    "primary_detection_index": null
+  }
+}

@@ -669,26 +669,7 @@ class _FrameDetailPanel extends StatelessWidget {
                 label: 'Inference error',
                 value: readyDetail.errorMessage!,
               ),
-            const SizedBox(height: 14),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: AppColors.background.withValues(alpha: 0.28),
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(
-                  color: AppColors.border.withValues(alpha: 0.72),
-                ),
-              ),
-              child: SelectableText(
-                readyDetail.prettyJson,
-                style: AppTypography.bodyMedium.copyWith(
-                  color: AppColors.textPrimary,
-                  fontSize: 12.5,
-                  height: 1.34,
-                ),
-              ),
-            ),
+
           ],
         ],
       ),
