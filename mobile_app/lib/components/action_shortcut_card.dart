@@ -25,7 +25,7 @@ class ActionShortcutCard extends StatelessWidget {
         : AppColors.border.withValues(alpha: 0.85);
 
     return Container(
-      constraints: const BoxConstraints(minHeight: 132),
+      constraints: const BoxConstraints(minHeight: 196, maxHeight: 196),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: isPrimary
