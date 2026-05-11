@@ -258,6 +258,11 @@ class ApiService {
     return DeviceCommandInfo.fromJson(data);
   }
 
+  /// Expose user-configured settings (server address, Pi IP, etc.) from the
+  /// local settings service. This allows screens to avoid importing
+  /// [MockPoseTrackingService] directly.
+  Future<PoseTrackSettings> getSettings() => _settingsService.getSettings();
+
   Future<DeviceCommandInfo> getDeviceCommandStatus({
     required int deviceId,
     required int commandId,

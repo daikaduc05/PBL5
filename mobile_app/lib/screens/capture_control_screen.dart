@@ -32,7 +32,6 @@ class CaptureControlScreen extends StatefulWidget {
 
 class _CaptureControlScreenState extends State<CaptureControlScreen> {
   final ApiService _api = ApiService();
-  final MockPoseTrackingService _poseService = MockPoseTrackingService();
   final ResultApi _resultApi = ResultApi();
 
   CaptureMode _selectedMode = CaptureMode.video;
@@ -69,7 +68,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
   }
 
   Future<void> _loadConfiguration() async {
-    final settings = await _poseService.getSettings();
+    final settings = await _api.getSettings();
     var ready = false;
     int? captureDeviceId;
     String? captureDeviceName;
@@ -534,7 +533,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
     required int targetDurationSeconds,
     required int actualDurationSeconds,
   }) async {
-    final settings = await _poseService.getSettings();
+    final settings = await _api.getSettings();
     final captureDevice = await _resolveCaptureDevice();
     if (captureDevice == null || !_isDeviceReady(captureDevice)) {
       throw const ApiException(

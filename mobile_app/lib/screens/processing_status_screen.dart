@@ -38,6 +38,7 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
 
   double _progress = 0.0;
   bool _isPolling = false;
+  bool _hasAutoNavigated = false;
   DeviceCommandInfo? _command;
   ResultSessionDetail? _resultSession;
   String? _errorMessage;
@@ -216,6 +217,22 @@ class _ProcessingStatusScreenState extends State<ProcessingStatusScreen>
       if (command.status == 'failed' ||
           (resultSession?.resultReadyCount ?? 0) > 0) {
         _timer?.cancel();
+      }
+
+      // Auto-navigate to result screen as soon as results are ready.
+      if ((resultSession?.resultReadyCount ?? 0) > 0 &&
+          !_hasAutoNavigated &&
+          mounted) {
+        _hasAutoNavigated = true;
+        await Future.delayed(const Duration(milliseconds: 600));
+        if (!mounted) return;
+        Navigator.of(context).pushReplacementNamed(
+          AppRoutes.captureResult,
+          arguments: ResultScreenArgs(
+            sessionId: resultSession!.sessionId,
+            initialFrameId: resultSession.latestResultFrameId,
+          ),
+        );
       }
     } catch (error) {
       if (!mounted) {
