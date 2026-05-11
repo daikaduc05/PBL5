@@ -54,7 +54,7 @@ class ResultApi {
   Future<Map<String, dynamic>> _getJson(String path) async {
     final uri = await _buildUri(path);
     final client = HttpClient()
-      ..connectionTimeout = const Duration(milliseconds: 1200);
+      ..connectionTimeout = const Duration(seconds: 5);
 
     try {
       final request = await client.getUrl(uri);
