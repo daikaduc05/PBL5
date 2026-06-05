@@ -194,3 +194,135 @@ export POSETRACK_CAMERA_FPS=8
 Set-Location .\mobile_app
 flutter run -d windows --dart-define=POSETRACK_BACKEND_ADDRESS=172.20.10.5:8002 --dart-define=POSETRACK_PREVIEW_SOCKET_PORT=8082
 ```
+cd mobile_app
+flutter run -d windows --dart-define=POSETRACK_BACKEND_ADDRESS=127.0.0.1:8002 --dart-define=POSETRACK_PREVIEW_SOCKET_PORT=8082
+
+---
+
+## 8. Deploy Backend len Railway (Cloud)
+
+> Sau khi deploy, Pi agent va PWA co the giao tiep voi backend qua internet,
+> khong can cung mang LAN.
+
+### Buoc 1: Tao tai khoan Railway
+
+Vao https://railway.app va dang ky bang GitHub.
+
+### Buoc 2: Tao project moi
+
+1. New Project → Deploy from GitHub repo
+2. Chon repo nay
+3. Set **Root Directory** = `backend`
+
+### Buoc 3: Cau hinh Environment Variables tren Railway
+
+Vao service → Variables → them cac bien sau:
+
+```
+CORS_ORIGINS=*
+DATABASE_URL=sqlite:///./posetrack.db
+```
+
+> **Luu y**: SQLite tren Railway la ephemeral (mat data khi redeploy).
+> Neu can luu history lau dai, them Railway PostgreSQL addon va doi DATABASE_URL.
+
+### Buoc 4: Set Start Command
+
+Trong Settings → Deploy:
+
+```
+uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+(Hoac Railway tu doc Procfile trong `backend/Procfile`)
+
+### Buoc 5: Lay Railway URL
+
+Sau khi deploy thanh cong, copy URL dang:
+```
+https://posetrack-backend-xxxx.railway.app
+```
+
+Kiem tra health:
+```
+https://posetrack-backend-xxxx.railway.app/api/health
+```
+
+---
+
+## 9. Build va Deploy PWA (Flutter Web)
+
+### Build PWA
+
+Tu thu muc goc repo:
+
+```powershell
+Set-Location .\mobile_app
+
+# Lay packages moi (co them http package)
+flutter pub get
+
+# Build web voi Railway backend URL
+flutter build web --release `
+  --dart-define=POSETRACK_BACKEND_ADDRESS=https://posetrack-backend-xxxx.railway.app `
+  --pwa-strategy=offline-first
+```
+
+Output o: `mobile_app\build\web\`
+
+### Deploy PWA len Vercel (mien phi, de nhat)
+
+1. Cai Vercel CLI:
+```powershell
+npm install -g vercel
+```
+
+2. Deploy:
+```powershell
+Set-Location .\mobile_app\build\web
+vercel --prod
+```
+
+3. Vercel se hoi cau hinh, chon defaults, lay URL dang:
+```
+https://posetrack-pwa.vercel.app
+```
+
+### Deploy PWA len Railway Static (tuy chon)
+
+Tao them 1 Railway service moi → Static Site, point vao `mobile_app/build/web/`.
+
+---
+
+## 10. Cau hinh Pi Agent voi Railway URL
+
+Khi da co Railway backend URL, chi can thay dia chi trong lenh chay Pi:
+
+```bash
+# Cu (LAN):
+/usr/bin/python3 pi_agent.py --backend http://172.20.10.5:8002 --device-name "Raspberry Pi 4B" --device-code pi-001
+
+# Moi (Railway cloud):
+/usr/bin/python3 pi_agent.py --backend https://posetrack-backend-xxxx.railway.app --device-name "Raspberry Pi 4B" --device-code pi-001
+```
+
+Pi khong can cung mang LAN voi may Windows nua, chi can co internet.
+
+---
+
+## 11. Dung PWA tren dien thoai
+
+1. Mo browser tren dien thoai (Chrome Android hoac Safari iOS)
+2. Vao URL cua PWA (Vercel hoac Railway)
+3. Vao **Settings** → nhap **Backend URL** = `https://posetrack-backend-xxxx.railway.app`
+4. **Cai nhu app**: 
+   - Android: Menu → "Add to Home Screen"
+   - iOS: Share → "Add to Home Screen"
+5. App se xuat hien tren man hinh chinh nhu app native
+
+### Luu y quan trong voi PWA:
+- **REST API**: hoat dong binh thuong
+- **Live preview stream (TCP port 8082)**: KHONG hoat dong tren PWA (browser khong ho tro raw TCP)
+  - Preview chi hoat dong khi dung native Flutter app tren cung mang LAN
+- **History, sessions, device control**: hoat dong day du
+

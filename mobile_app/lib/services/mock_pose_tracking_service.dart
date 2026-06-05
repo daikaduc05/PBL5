@@ -1,5 +1,6 @@
 import 'dart:convert';
-import 'dart:io';
+
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/backend_config.dart';
 
@@ -112,9 +113,14 @@ class ProcessingStage {
 // ---------------------------------------------------------------------------
 // SettingsService – singleton that persists user-configured settings locally.
 // Named MockPoseTrackingService for backward-compat with existing imports.
+//
+// Dùng shared_preferences để lưu settings:
+//   - Web (PWA)  : localStorage (tự động bởi shared_preferences)
+//   - Android    : SharedPreferences
+//   - iOS        : NSUserDefaults
+//   - Windows    : Registry / local file
 // ---------------------------------------------------------------------------
 
-// ignore: avoid_classes_with_only_static_members
 class MockPoseTrackingService {
   MockPoseTrackingService._();
 
@@ -124,7 +130,10 @@ class MockPoseTrackingService {
 
   Future<void>? _settingsLoadFuture;
 
-  PoseTrackSettings _settings = const PoseTrackSettings(
+  static const String _kSettingsKey = 'posetrack_settings_v1';
+
+  // Không dùng const vì defaultServerAddress là getter runtime (kIsWeb)
+  PoseTrackSettings _settings = PoseTrackSettings(
     raspberryPiIp: '192.168.1.24',
     serverAddress: BackendConfig.defaultServerAddress,
     defaultMode: CaptureMode.video,
@@ -151,63 +160,26 @@ class MockPoseTrackingService {
 
   Future<void> _loadStoredSettings() async {
     try {
-      final file = _settingsFile;
-      if (!await file.exists()) {
-        return;
-      }
-
-      final raw = await file.readAsString();
-      if (raw.trim().isEmpty) {
-        return;
-      }
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kSettingsKey);
+      if (raw == null || raw.trim().isEmpty) return;
 
       final decoded = jsonDecode(raw);
       if (decoded is Map<String, dynamic>) {
         _settings = PoseTrackSettings.fromJson(decoded);
       }
     } catch (_) {
-      // Fall back to in-memory defaults when local persistence is unavailable.
+      // Fall back to in-memory defaults when persistence is unavailable.
     }
   }
 
   Future<void> _persistSettings() async {
     try {
-      final file = _settingsFile;
-      await file.parent.create(recursive: true);
-      await file.writeAsString(jsonEncode(_settings.toJson()), flush: true);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kSettingsKey, jsonEncode(_settings.toJson()));
     } catch (_) {
-      // Keep the updated in-memory settings even if file persistence fails.
+      // Keep the updated in-memory settings even if persistence fails.
     }
-  }
-
-  File get _settingsFile {
-    final separator = Platform.pathSeparator;
-
-    if (Platform.isWindows) {
-      final root =
-          Platform.environment['LOCALAPPDATA'] ??
-          Platform.environment['APPDATA'] ??
-          Directory.current.path;
-      return File('$root${separator}PoseTrack${separator}settings.json');
-    }
-
-    if (Platform.isMacOS) {
-      final home = Platform.environment['HOME'] ?? Directory.current.path;
-      return File(
-        '$home${separator}Library${separator}Application Support${separator}PoseTrack${separator}settings.json',
-      );
-    }
-
-    if (Platform.isLinux) {
-      final home = Platform.environment['HOME'] ?? Directory.current.path;
-      return File(
-        '$home$separator.config${separator}posetrack${separator}settings.json',
-      );
-    }
-
-    return File(
-      '${Directory.systemTemp.path}${separator}posetrack_settings.json',
-    );
   }
 }
 

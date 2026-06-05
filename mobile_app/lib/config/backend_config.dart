@@ -1,12 +1,32 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 class BackendConfig {
   const BackendConfig._();
 
-  // Override with:
+  // Override khi build web cho Railway:
+  // flutter build web --dart-define=POSETRACK_BACKEND_ADDRESS=https://posetrack-backend.railway.app
+  //
+  // Override khi build native local:
   // flutter run --dart-define=POSETRACK_BACKEND_ADDRESS=192.168.1.10:8002
-  static const String defaultServerAddress = String.fromEnvironment(
+  static const String _envServerAddress = String.fromEnvironment(
     'POSETRACK_BACKEND_ADDRESS',
-    defaultValue: '192.168.1.10:8002',
+    defaultValue: '',
   );
+
+  /// Server address được dùng bởi ApiService.
+  /// - Nếu có --dart-define POSETRACK_BACKEND_ADDRESS, dùng giá trị đó.
+  /// - Nếu chạy trên web (PWA), fallback về cùng origin (relative) —
+  ///   nghĩa là PWA và backend phải cùng host, hoặc user tự nhập trong Settings.
+  /// - Nếu chạy native, fallback về địa chỉ LAN mặc định.
+  static String get defaultServerAddress {
+    if (_envServerAddress.isNotEmpty) return _envServerAddress;
+    if (kIsWeb) {
+      // Khi chạy PWA trên web: user sẽ nhập URL backend trong Settings screen.
+      // Để trống để app hiển thị warning và yêu cầu nhập.
+      return '';
+    }
+    return '192.168.1.10:8002';
+  }
 
   // Raspberry Pi device code expected by the mobile app in MVP mode.
   static const String defaultPiDeviceCode = String.fromEnvironment(

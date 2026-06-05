@@ -1,6 +1,8 @@
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes.device import router as device_router
@@ -26,10 +28,27 @@ RESULTS_STATIC_ROOT.mkdir(parents=True, exist_ok=True)
 UPLOADS_STATIC_ROOT = BACKEND_ROOT / "storage" / "uploads"
 UPLOADS_STATIC_ROOT.mkdir(parents=True, exist_ok=True)
 
+# ── CORS ──────────────────────────────────────────────────────────────────────
+# Đọc từ env var CORS_ORIGINS (comma-separated).
+# Ví dụ: CORS_ORIGINS=https://posetrack.vercel.app,https://posetrack.railway.app
+# Mặc định allow "*" để dễ dev / demo (đổi lại khi production thật sự).
+_raw_cors = os.getenv("CORS_ORIGINS", "*")
+CORS_ORIGINS: list[str] = (
+    ["*"] if _raw_cors.strip() == "*"
+    else [o.strip() for o in _raw_cors.split(",") if o.strip()]
+)
 
 app = FastAPI(
     title="PoseTrack Backend",
     version="0.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=CORS_ORIGINS != ["*"],  # credentials không dùng được với wildcard
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -39,7 +58,7 @@ def read_root() -> dict:
         "success": True,
         "message": "PoseTrack backend is running",
         "data": {
-            "port": 8002,
+            "port": int(os.getenv("PORT", "8002")),
         },
     }
 

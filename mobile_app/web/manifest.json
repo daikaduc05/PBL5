@@ -1,13 +1,14 @@
 {
-    "name": "mobile_app",
-    "short_name": "mobile_app",
+    "name": "PoseTrack",
+    "short_name": "PoseTrack",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0D0D1A",
+    "theme_color": "#6C63FF",
+    "description": "PoseTrack - Hệ thống theo dõi tư thế sử dụng Raspberry Pi và AI",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
+    "categories": ["utilities", "health", "fitness"],
     "icons": [
         {
             "src": "icons/Icon-192.png",

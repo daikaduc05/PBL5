@@ -1,5 +1,6 @@
 import 'dart:convert';
-import 'dart:io';
+
+import 'package:http/http.dart' as http;
 
 import '../config/backend_config.dart';
 import 'mock_pose_tracking_service.dart';
@@ -201,6 +202,9 @@ class HistoryDetail {
 
 /// Centralized HTTP client for PoseTrack backend REST API.
 ///
+/// Sử dụng [package:http] thay vì dart:io HttpClient để tương thích
+/// cả Flutter native lẫn Flutter Web (PWA).
+///
 /// Reads `serverAddress` from [MockPoseTrackingService] settings so it stays
 /// in sync with whatever the user configured in the Settings screen.
 class ApiService {
@@ -208,6 +212,9 @@ class ApiService {
       : _settingsService = settingsService ?? MockPoseTrackingService();
 
   final MockPoseTrackingService _settingsService;
+
+  // Shared http.Client — tái sử dụng connection pool, tránh tạo mới mỗi request.
+  final http.Client _client = http.Client();
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -308,24 +315,17 @@ class ApiService {
 
   Future<Map<String, dynamic>> _getJson(String path) async {
     final uri = await _buildUri(path);
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 5);
-
     try {
-      final request = await client.getUrl(uri);
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      return await _parseResponse(response);
-    } on SocketException {
+      final response = await _client
+          .get(uri, headers: {'Accept': 'application/json'})
+          .timeout(const Duration(seconds: 10));
+      return _parseResponse(response);
+    } on ApiException {
+      rethrow;
+    } catch (e) {
       throw ApiException(
-        'Cannot reach backend at ${uri.host}:${uri.port}. Check the server IP and Wi-Fi.',
+        'Cannot reach backend at ${uri.host}. Check the server URL and network. ($e)',
       );
-    } on HttpException catch (e) {
-      throw ApiException(e.message);
-    } on FormatException {
-      throw const ApiException('Backend returned invalid JSON.');
-    } finally {
-      client.close(force: true);
     }
   }
 
@@ -334,37 +334,32 @@ class ApiService {
     Map<String, dynamic> body,
   ) async {
     final uri = await _buildUri(path);
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 5);
-
     try {
-      final request = await client.postUrl(uri);
-      request.headers
-        ..set(HttpHeaders.contentTypeHeader, 'application/json')
-        ..set(HttpHeaders.acceptHeader, 'application/json');
-      request.write(jsonEncode(body));
-      final response = await request.close();
-      return await _parseResponse(response);
-    } on SocketException {
+      final response = await _client
+          .post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 10));
+      return _parseResponse(response);
+    } on ApiException {
+      rethrow;
+    } catch (e) {
       throw ApiException(
-        'Cannot reach backend at ${uri.host}:${uri.port}.',
+        'Cannot reach backend at ${uri.host}. ($e)',
       );
-    } on HttpException catch (e) {
-      throw ApiException(e.message);
-    } on FormatException {
-      throw const ApiException('Backend returned invalid JSON.');
-    } finally {
-      client.close(force: true);
     }
   }
 
-  Future<Map<String, dynamic>> _parseResponse(HttpClientResponse response) async {
-    final body = await response.transform(utf8.decoder).join();
-
+  Map<String, dynamic> _parseResponse(http.Response response) {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       String message = 'HTTP ${response.statusCode}';
       try {
-        final decoded = jsonDecode(body);
+        final decoded = jsonDecode(response.body);
         if (decoded is Map) {
           message = (decoded['message'] ?? decoded['detail'] ?? message)
               .toString();
@@ -375,8 +370,8 @@ class ApiService {
       throw ApiException(message, statusCode: response.statusCode);
     }
 
-    if (body.trim().isEmpty) return const {};
-    final decoded = jsonDecode(body);
+    if (response.body.trim().isEmpty) return const {};
+    final decoded = jsonDecode(response.body);
     if (decoded is Map<String, dynamic>) return decoded;
     throw const ApiException('Unexpected response format from backend.');
   }

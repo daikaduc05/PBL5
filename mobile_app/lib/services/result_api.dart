@@ -1,5 +1,6 @@
 import 'dart:convert';
-import 'dart:io';
+
+import 'package:http/http.dart' as http;
 
 import '../config/backend_config.dart';
 import '../models/result_models.dart';
@@ -19,6 +20,7 @@ class ResultApi {
     : _settingsService = settingsService ?? MockPoseTrackingService();
 
   final MockPoseTrackingService _settingsService;
+  final http.Client _client = http.Client();
 
   Future<List<ResultSession>> getResultSessions() async {
     final response = await _getJson('/api/results/sessions');
@@ -53,15 +55,12 @@ class ResultApi {
 
   Future<Map<String, dynamic>> _getJson(String path) async {
     final uri = await _buildUri(path);
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 5);
-
     try {
-      final request = await client.getUrl(uri);
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      final response = await _client
+          .get(uri, headers: {'Accept': 'application/json'})
+          .timeout(const Duration(seconds: 10));
 
-      final response = await request.close();
-      final responseBody = await response.transform(utf8.decoder).join();
+      final responseBody = response.body;
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw ResultApiException(
@@ -81,18 +80,12 @@ class ResultApi {
       throw const ResultApiException(
         'The backend returned an unexpected response format.',
       );
-    } on SocketException {
-      throw const ResultApiException(
-        'Unable to reach the backend results API. Check the server IP, port, and Wi-Fi network.',
+    } on ResultApiException {
+      rethrow;
+    } catch (e) {
+      throw ResultApiException(
+        'Unable to reach the backend results API. Check the server URL and network. ($e)',
       );
-    } on HttpException catch (error) {
-      throw ResultApiException(error.message);
-    } on FormatException {
-      throw const ResultApiException(
-        'The backend returned invalid JSON for this request.',
-      );
-    } finally {
-      client.close(force: true);
     }
   }
 
