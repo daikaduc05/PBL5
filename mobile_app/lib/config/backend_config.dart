@@ -15,13 +15,13 @@ class BackendConfig {
 
   /// Server address được dùng bởi ApiService.
   /// - Nếu có --dart-define POSETRACK_BACKEND_ADDRESS, dùng giá trị đó.
-  /// - Nếu chạy trên web (PWA), fallback về cùng origin (relative) —
-  ///   nghĩa là PWA và backend phải cùng host, hoặc user tự nhập trong Settings.
+  /// - Nếu chạy trên web (Web), fallback về cùng origin (relative) —
+  ///   nghĩa là Web và backend phải cùng host, hoặc user tự nhập trong Settings.
   /// - Nếu chạy native, fallback về địa chỉ LAN mặc định.
   static String get defaultServerAddress {
     if (_envServerAddress.isNotEmpty) return _envServerAddress;
     if (kIsWeb) {
-      // Khi chạy PWA trên web: user sẽ nhập URL backend trong Settings screen.
+      // Khi chạy Web trên web: user sẽ nhập URL backend trong Settings screen.
       // Để trống để app hiển thị warning và yêu cầu nhập.
       return '';
     }

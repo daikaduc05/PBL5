@@ -115,7 +115,7 @@ class ProcessingStage {
 // Named MockPoseTrackingService for backward-compat with existing imports.
 //
 // Dùng shared_preferences để lưu settings:
-//   - Web (PWA)  : localStorage (tự động bởi shared_preferences)
+//   - Web   : localStorage (tự động bởi shared_preferences)
 //   - Android    : SharedPreferences
 //   - iOS        : NSUserDefaults
 //   - Windows    : Registry / local file

@@ -41,7 +41,7 @@ class PiPreviewSocketView extends StatelessWidget {
               ),
               const SizedBox(height: 14),
               Text(
-                'Live preview không khả dụng trên PWA',
+                'Live preview không khả dụng trên Web',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: Colors.white,

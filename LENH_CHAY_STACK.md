@@ -201,7 +201,7 @@ flutter run -d windows --dart-define=POSETRACK_BACKEND_ADDRESS=127.0.0.1:8002 --
 
 ## 8. Deploy Backend len Railway (Cloud)
 
-> Sau khi deploy, Pi agent va PWA co the giao tiep voi backend qua internet,
+> Sau khi deploy, Pi agent va Flutter app (native) co the giao tiep voi backend qua internet,
 > khong can cung mang LAN.
 
 ### Buoc 1: Tao tai khoan Railway
@@ -250,51 +250,7 @@ https://posetrack-backend-xxxx.railway.app/api/health
 
 ---
 
-## 9. Build va Deploy PWA (Flutter Web)
-
-### Build PWA
-
-Tu thu muc goc repo:
-
-```powershell
-Set-Location .\mobile_app
-
-# Lay packages moi (co them http package)
-flutter pub get
-
-# Build web voi Railway backend URL
-flutter build web --release `
-  --dart-define=POSETRACK_BACKEND_ADDRESS=https://posetrack-backend-xxxx.railway.app `
-  --pwa-strategy=offline-first
-```
-
-Output o: `mobile_app\build\web\`
-
-### Deploy PWA len Vercel (mien phi, de nhat)
-
-1. Cai Vercel CLI:
-```powershell
-npm install -g vercel
-```
-
-2. Deploy:
-```powershell
-Set-Location .\mobile_app\build\web
-vercel --prod
-```
-
-3. Vercel se hoi cau hinh, chon defaults, lay URL dang:
-```
-https://posetrack-pwa.vercel.app
-```
-
-### Deploy PWA len Railway Static (tuy chon)
-
-Tao them 1 Railway service moi → Static Site, point vao `mobile_app/build/web/`.
-
----
-
-## 10. Cau hinh Pi Agent voi Railway URL
+## 9. Cau hinh Pi Agent voi Railway URL
 
 Khi da co Railway backend URL, chi can thay dia chi trong lenh chay Pi:
 
@@ -307,22 +263,3 @@ Khi da co Railway backend URL, chi can thay dia chi trong lenh chay Pi:
 ```
 
 Pi khong can cung mang LAN voi may Windows nua, chi can co internet.
-
----
-
-## 11. Dung PWA tren dien thoai
-
-1. Mo browser tren dien thoai (Chrome Android hoac Safari iOS)
-2. Vao URL cua PWA (Vercel hoac Railway)
-3. Vao **Settings** → nhap **Backend URL** = `https://posetrack-backend-xxxx.railway.app`
-4. **Cai nhu app**: 
-   - Android: Menu → "Add to Home Screen"
-   - iOS: Share → "Add to Home Screen"
-5. App se xuat hien tren man hinh chinh nhu app native
-
-### Luu y quan trong voi PWA:
-- **REST API**: hoat dong binh thuong
-- **Live preview stream (TCP port 8082)**: KHONG hoat dong tren PWA (browser khong ho tro raw TCP)
-  - Preview chi hoat dong khi dung native Flutter app tren cung mang LAN
-- **History, sessions, device control**: hoat dong day du
-

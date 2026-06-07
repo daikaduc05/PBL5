@@ -203,7 +203,7 @@ class HistoryDetail {
 /// Centralized HTTP client for PoseTrack backend REST API.
 ///
 /// Sử dụng [package:http] thay vì dart:io HttpClient để tương thích
-/// cả Flutter native lẫn Flutter Web (PWA).
+/// cả Flutter native lẫn Flutter Web .
 ///
 /// Reads `serverAddress` from [MockPoseTrackingService] settings so it stays
 /// in sync with whatever the user configured in the Settings screen.
