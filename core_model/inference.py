@@ -24,6 +24,7 @@ try:
         UNKNOWN,
         compute_squat_angles_stable,
     )
+    from .rep_counter import ExerciseCounter, PUSHUP_CONFIG, SQUAT_CONFIG
 except ImportError:
     from form_checker import (
         AWAITING_REP_MESSAGE,
@@ -34,12 +35,13 @@ except ImportError:
         UNKNOWN,
         compute_squat_angles_stable,
     )
+    from rep_counter import ExerciseCounter, PUSHUP_CONFIG, SQUAT_CONFIG
 
 
 logger = logging.getLogger(__name__)
 
 MODULE_DIR = Path(__file__).resolve().parent
-DEFAULT_CHECKPOINT_PATH = MODULE_DIR / "checkpoint" / "checkpoint_manual_epoch39.pth"
+DEFAULT_CHECKPOINT_PATH = MODULE_DIR / "checkpoint_latest.pth"
 DEFAULT_DETECTOR_PATH = MODULE_DIR / "yolov8n.pt"
 BN_MOMENTUM = 0.1
 
@@ -848,6 +850,10 @@ def run_camera_demo(
     last_results: list[dict[str, Any]] = []
     last_fps = 0.0
     tracker = SquatFormTracker()
+    squat_counter  = ExerciseCounter(SQUAT_CONFIG)
+    pushup_counter = ExerciseCounter(PUSHUP_CONFIG)
+    last_squat_state:  dict[str, Any] = {"count": 0, "stage": "Initial"}
+    last_pushup_state: dict[str, Any] = {"count": 0, "stage": "Initial"}
     last_form_info: dict[str, Any] = {
         "rep_count": 0,
         "stage": None,
@@ -912,6 +918,13 @@ def run_camera_demo(
                     )
                     last_form_info = tracker.update(angle_info)
 
+                    kps_with_conf = np.hstack([
+                        primary_result["keypoints"],
+                        primary_result["keypoint_scores"][:, None],
+                    ])
+                    last_squat_state  = squat_counter.update(kps_with_conf)
+                    last_pushup_state = pushup_counter.update(kps_with_conf)
+
                     primary_result["angles"] = None
                     if last_form_info["valid_pose"]:
                         primary_result["angles"] = {
@@ -928,7 +941,7 @@ def run_camera_demo(
 
             knee_min_text = "-" if last_form_info["knee_min"] is None else f"{last_form_info['knee_min']:.1f}"
             hip_min_text = "-" if last_form_info["hip_min"] is None else f"{last_form_info['hip_min']:.1f}"
-            cv2.rectangle(vis, (10, 55), (520, 225), (0, 0, 0), -1)
+            cv2.rectangle(vis, (10, 55), (520, 265), (0, 0, 0), -1)
             cv2.putText(
                 vis, f"Reps: {last_form_info['rep_count']}  Stage: {last_form_info['stage'] or '-'}",
                 (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA,
@@ -946,8 +959,14 @@ def run_camera_demo(
                 (20, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA,
             )
             cv2.putText(
+                vis,
+                f"Squat: {last_squat_state['count']} reps  [{last_squat_state['stage']}]  |  "
+                f"Pushup: {last_pushup_state['count']} reps  [{last_pushup_state['stage']}]",
+                (20, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2, cv2.LINE_AA,
+            )
+            cv2.putText(
                 vis, f"FPS: {last_fps:.1f}  Det: {len(results)}",
-                (20, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA,
+                (20, 245), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA,
             )
 
             cv2.imshow(window_name, vis)
