@@ -16,8 +16,10 @@ def list_result_sessions() -> dict[str, list[str]]:
     return {"sessions": list_result_session_ids()}
 
 
+from typing import Any
+
 @router.get("/{session_id}")
-def list_session_results(session_id: str) -> dict[str, str | list[dict[str, int | str | None]]]:
+def list_session_results(session_id: str) -> dict[str, Any]:
     try:
         return build_session_result_payload(session_id)
     except FileNotFoundError as exc:

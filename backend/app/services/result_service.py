@@ -71,7 +71,7 @@ def build_frame_payload(
     }
 
 
-def build_session_result_payload(session_id: str) -> dict[str, str | list[dict[str, int | str | None]]]:
+def build_session_result_payload(session_id: str) -> dict[str, Any]:
     session_dir = get_session_dir(session_id)
     if session_dir is None:
         raise FileNotFoundError(session_id)
@@ -81,9 +81,24 @@ def build_session_result_payload(session_id: str) -> dict[str, str | list[dict[s
         for frame_id, file_paths in collect_frame_files(session_dir).items()
     ]
 
+    overall_result = None
+    latest_result_frame = next(
+        (frame for frame in reversed(frames) if frame["result_json_path"] is not None),
+        None,
+    )
+    if latest_result_frame is not None:
+        import json
+        result_json_path = BACKEND_ROOT / latest_result_frame["result_json_path"]
+        try:
+            with result_json_path.open("r", encoding="utf-8") as f:
+                overall_result = json.load(f)
+        except Exception:
+            pass
+
     return {
         "session_id": session_id,
         "frames": frames,
+        "overall_result": overall_result,
     }
 
 

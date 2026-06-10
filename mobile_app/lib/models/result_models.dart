@@ -21,11 +21,13 @@ class ResultSessionDetail {
   final String sessionId;
   final DateTime? capturedAt;
   final List<ResultFrameItem> frames;
+  final FrameResultDetail? overallResult;
 
   const ResultSessionDetail({
     required this.sessionId,
     required this.capturedAt,
     required this.frames,
+    this.overallResult,
   });
 
   int get frameCount => frames.length;
@@ -71,10 +73,23 @@ class ResultSessionDetail {
         .toList(growable: false)
       ..sort((left, right) => left.frameId.compareTo(right.frameId));
 
+    FrameResultDetail? overallResult;
+    if (json['overall_result'] is Map) {
+      final latestFrameId = frames.isNotEmpty
+          ? (frames.lastWhere((f) => f.hasResultJson, orElse: () => frames.last).frameId)
+          : 0;
+      overallResult = FrameResultDetail.fromJson(
+        sessionId,
+        latestFrameId,
+        Map<String, dynamic>.from(json['overall_result']),
+      );
+    }
+
     return ResultSessionDetail(
       sessionId: sessionId,
       capturedAt: _parseSessionTimestamp(sessionId),
       frames: frames,
+      overallResult: overallResult,
     );
   }
 }

@@ -128,6 +128,10 @@ class _ResultSessionDetailScreenState extends State<ResultSessionDetailScreen> {
                 sessionId: widget.sessionId,
               ),
               const SizedBox(height: 18),
+              if (_sessionDetail?.overallResult != null) ...[
+                _OverallResultPanel(overallResult: _sessionDetail!.overallResult!),
+                const SizedBox(height: 18),
+              ],
               if (_isLoading)
                 const _LoadingState(message: 'Loading frame list...')
               else if (_errorMessage != null)
@@ -234,6 +238,125 @@ class _SessionHero extends StatelessWidget {
               ),
             ],
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OverallResultPanel extends StatelessWidget {
+  final FrameResultDetail overallResult;
+
+  const _OverallResultPanel({required this.overallResult});
+
+  Color _formStatusColor(String? status) {
+    switch (status) {
+      case 'GOOD_FORM':
+        return AppColors.success;
+      case 'BAD_FORM':
+        return AppColors.error;
+      default:
+        return AppColors.warning;
+    }
+  }
+
+  String _formStatusLabel(String? status) {
+    switch (status) {
+      case 'GOOD_FORM':
+        return 'Good Form';
+      case 'BAD_FORM':
+        return 'Bad Form';
+      default:
+        return 'Unknown Form';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tracking = overallResult.formTracking;
+    final primaryDetection = overallResult.poseOverlay?.primaryDetection;
+    final formStatus = tracking?.status ?? primaryDetection?.formStatus;
+    final formMessage = tracking?.message ?? primaryDetection?.formFeedback;
+
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Overall Evaluation',
+                  style: AppTypography.h3.copyWith(fontSize: 20),
+                ),
+              ),
+              const StatusBadge(
+                label: 'Latest Result',
+                color: AppColors.primary,
+                icon: Icons.insights_rounded,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'The final evaluation of this session based on the latest processed frame.',
+            style: AppTypography.bodyMedium.copyWith(
+              color: AppColors.textSecondary,
+              fontSize: 14,
+              height: 1.26,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              if (formStatus != null)
+                StatusBadge(
+                  label: _formStatusLabel(formStatus),
+                  color: _formStatusColor(formStatus),
+                  icon: Icons.fitness_center_rounded,
+                ),
+              if (tracking != null)
+                _InfoChip(
+                  icon: Icons.repeat_rounded,
+                  label: 'Reps: ${tracking.repCount}',
+                ),
+              if (tracking?.stage != null)
+                _InfoChip(
+                  icon: Icons.stairs_rounded,
+                  label: 'Stage: ${tracking!.stage}',
+                ),
+            ],
+          ),
+          if (formMessage != null) ...[
+            const SizedBox(height: 14),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 118,
+                  child: Text(
+                    'Feedback',
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: AppColors.textMuted,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    formMessage,
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: AppColors.textPrimary,
+                      fontSize: 13.5,
+                      height: 1.24,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
