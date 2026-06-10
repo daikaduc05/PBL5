@@ -791,7 +791,13 @@ def _run_pose_pipeline(
 
     resolved_output_path: str | None = None
     if output_path is not None:
-        resolved_output_path = str(save_image(visualized_image, output_path))
+        resolved_output_path = str(Path(output_path).expanduser().resolve())
+        import threading
+        threading.Thread(
+            target=save_image,
+            args=(visualized_image.copy(), resolved_output_path),
+            daemon=True
+        ).start()
 
     response = {
         "success": True,
