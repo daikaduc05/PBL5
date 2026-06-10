@@ -1,7 +1,10 @@
 import os
+import asyncio
+import json
+import zmq.asyncio
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -72,3 +75,71 @@ app.include_router(media_router, prefix="/api")
 app.include_router(job_router, prefix="/api")
 app.include_router(history_router, prefix="/api")
 app.include_router(result_router, prefix="/api")
+
+
+# ── WebSockets & ZMQ Listener ─────────────────────────────────────────────────
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: dict[str, list[WebSocket]] = {}
+
+    async def connect(self, websocket: WebSocket, session_id: str):
+        await websocket.accept()
+        if session_id not in self.active_connections:
+            self.active_connections[session_id] = []
+        self.active_connections[session_id].append(websocket)
+
+    def disconnect(self, websocket: WebSocket, session_id: str):
+        if session_id in self.active_connections:
+            if websocket in self.active_connections[session_id]:
+                self.active_connections[session_id].remove(websocket)
+            if not self.active_connections[session_id]:
+                del self.active_connections[session_id]
+
+    async def broadcast(self, message: str, session_id: str):
+        if session_id in self.active_connections:
+            for connection in list(self.active_connections[session_id]):
+                try:
+                    await connection.send_text(message)
+                except Exception:
+                    self.disconnect(connection, session_id)
+
+manager = ConnectionManager()
+
+
+@app.websocket("/ws/realtime/{session_id}")
+async def websocket_endpoint(websocket: WebSocket, session_id: str):
+    await manager.connect(websocket, session_id)
+    try:
+        while True:
+            # We don't expect messages from the client, but we must keep the connection alive
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, session_id)
+
+
+async def zmq_listener():
+    ctx = zmq.asyncio.Context()
+    sock = ctx.socket(zmq.SUB)
+    sock.connect("tcp://127.0.0.1:5556")
+    sock.setsockopt_string(zmq.SUBSCRIBE, "")
+    print("Started ZMQ listener on port 5556")
+    try:
+        while True:
+            message = await sock.recv_string()
+            try:
+                data = json.loads(message)
+                session_id = data.get("session_id")
+                if session_id:
+                    await manager.broadcast(message, session_id)
+            except json.JSONDecodeError:
+                pass
+    except asyncio.CancelledError:
+        sock.close()
+        ctx.term()
+
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(zmq_listener())
+

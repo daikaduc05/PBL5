@@ -1,0 +1,34 @@
+{
+  "session_id": "sess_000037",
+  "frame_id": "1",
+  "device_id": 2,
+  "filename": "camera_photo.jpg",
+  "timestamp": 1781071274.9237375,
+  "message_type": "capture_photo",
+  "pose_output_path": "D:\\TaiLieuNam3_DUT\\HKII\\PBL5\\PBL5\\backend\\workers\\results\\sess_000037\\frame_1_pose.jpg",
+  "success": false,
+  "num_detections": 0,
+  "inference_result": {
+    "success": false,
+    "num_detections": 0,
+    "output_path": null,
+    "error": "Checkpoint not found: D:\\TaiLieuNam3_DUT\\HKII\\PBL5\\PBL5\\core_model\\checkpoint_latest.pth",
+    "detections": [],
+    "form_tracking": {
+      "rep_count": 0,
+      "stage": null,
+      "status": "UNKNOWN",
+      "message": "Move back - full body required",
+      "knee_angle": null,
+      "hip_angle": null,
+      "knee_min": null,
+      "hip_min": null,
+      "standing_knee": null,
+      "side_used": null,
+      "valid_pose": false,
+      "rep_completed": false,
+      "last_rep_summary": null
+    },
+    "primary_detection_index": null
+  }
+}

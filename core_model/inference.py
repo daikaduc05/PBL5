@@ -41,7 +41,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 MODULE_DIR = Path(__file__).resolve().parent
-DEFAULT_CHECKPOINT_PATH = MODULE_DIR / "checkpoint_latest.pth"
+DEFAULT_CHECKPOINT_PATH = MODULE_DIR / "checkpoint" / "checkpoint_manual_epoch39.pth"
 DEFAULT_DETECTOR_PATH = MODULE_DIR / "yolov8n.pt"
 BN_MOMENTUM = 0.1
 
@@ -49,13 +49,27 @@ _POSE_MODEL: nn.Module | None = None
 _POSE_MODEL_PATH: Path | None = None
 _PERSON_DETECTOR: YOLO | None = None
 _PERSON_DETECTOR_PATH: Path | None = None
+_LOGGED_GPU_STATUS = False
+
+
+def log_gpu_status():
+    global _LOGGED_GPU_STATUS
+    if not _LOGGED_GPU_STATUS:
+        is_gpu = torch.cuda.is_available()
+        if is_gpu:
+            print(f"🚀 [core_model/inference] GPU IS AVAILABLE! Models will run on: {torch.cuda.get_device_name(0)}", flush=True)
+        else:
+            print("⚠️ [core_model/inference] GPU IS NOT AVAILABLE! Models will run on CPU (this will be slow).", flush=True)
+        _LOGGED_GPU_STATUS = True
 
 
 def get_runtime_device() -> torch.device:
+    log_gpu_status()
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def get_detector_device() -> int | str:
+    log_gpu_status()
     return 0 if torch.cuda.is_available() else "cpu"
 
 
@@ -777,7 +791,13 @@ def _run_pose_pipeline(
 
     resolved_output_path: str | None = None
     if output_path is not None:
-        resolved_output_path = str(save_image(visualized_image, output_path))
+        resolved_output_path = str(Path(output_path).expanduser().resolve())
+        import threading
+        threading.Thread(
+            target=save_image,
+            args=(visualized_image.copy(), resolved_output_path),
+            daemon=True
+        ).start()
 
     response = {
         "success": True,

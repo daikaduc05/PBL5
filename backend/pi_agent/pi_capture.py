@@ -288,6 +288,8 @@ def capture_video_to_zmq(
 
 
 def stream_idle_preview(
+    zmq_host: str,
+    zmq_port: int,
     camera_index: int = 0,
     width: int | None = None,
     height: int | None = None,
@@ -300,6 +302,8 @@ def stream_idle_preview(
 
     try:
         _stream_idle_preview_with_picamera2(
+            zmq_host=zmq_host,
+            zmq_port=zmq_port,
             camera_index=camera_index,
             width=width,
             height=height,
@@ -321,6 +325,7 @@ def stream_idle_preview(
         height=height,
         fps=fps,
     )
+    socket, context = _open_push_socket(zmq_host, zmq_port)
     frame_interval_seconds = 1.0 / max(fps, 1.0)
 
     idle_frame_id = 0
@@ -333,14 +338,28 @@ def stream_idle_preview(
             success, frame = camera.read()
             if success and frame is not None:
                 idle_frame_id += 1
+                frame_timestamp = time.time()
+                frame_bytes = _encode_frame_to_jpeg(cv2, frame)
                 _publish_preview_frame(
                     cv2,
                     frame,
                     metadata=_build_preview_metadata(
                         frame_id=idle_frame_id,
-                        session_id=None,
+                        session_id="idle_preview",
                         mode="idle_preview",
+                        timestamp=frame_timestamp,
                     ),
+                )
+                _send_frame_bytes(
+                    socket=socket,
+                    session_id="idle_preview",
+                    frame_id=idle_frame_id,
+                    frame_bytes=frame_bytes,
+                    device_id=None,
+                    message_type="idle_frame_stream",
+                    filename=f"idle_frame_{idle_frame_id}.jpg",
+                    source="camera",
+                    timestamp=frame_timestamp,
                 )
 
             remaining_sleep = frame_interval_seconds - (time.monotonic() - loop_started_at)
@@ -357,6 +376,8 @@ def stream_idle_preview(
         raise RuntimeError(f"OpenCV idle preview failed: {exc}") from exc
     finally:
         camera.release()
+        socket.close(0)
+        context.term()
 
 
 def _list_frame_files(frames_dir: str) -> list[Path]:
@@ -671,6 +692,8 @@ def _capture_video_with_picamera2_to_zmq(
 
 
 def _stream_idle_preview_with_picamera2(
+    zmq_host: str,
+    zmq_port: int,
     camera_index: int,
     width: int | None,
     height: int | None,
@@ -680,6 +703,7 @@ def _stream_idle_preview_with_picamera2(
     logger: LogFn | None,
 ) -> None:
     cv2 = _import_cv2()
+    socket, context = _open_push_socket(zmq_host, zmq_port)
     picamera2 = None
     frame_interval_seconds = 1.0 / max(fps, 1.0)
     idle_frame_id = 0
@@ -709,14 +733,28 @@ def _stream_idle_preview_with_picamera2(
             frame = _normalize_frame_for_jpeg(cv2, picamera2.capture_array("main"))
             if frame is not None:
                 idle_frame_id += 1
+                frame_timestamp = time.time()
+                frame_bytes = _encode_frame_to_jpeg(cv2, frame)
                 _publish_preview_frame(
                     cv2,
                     frame,
                     metadata=_build_preview_metadata(
                         frame_id=idle_frame_id,
-                        session_id=None,
+                        session_id="idle_preview",
                         mode="idle_preview",
+                        timestamp=frame_timestamp,
                     ),
+                )
+                _send_frame_bytes(
+                    socket=socket,
+                    session_id="idle_preview",
+                    frame_id=idle_frame_id,
+                    frame_bytes=frame_bytes,
+                    device_id=None,
+                    message_type="idle_frame_stream",
+                    filename=f"idle_frame_{idle_frame_id}.jpg",
+                    source="camera",
+                    timestamp=frame_timestamp,
                 )
 
             remaining_sleep = frame_interval_seconds - (time.monotonic() - loop_started_at)
@@ -729,6 +767,8 @@ def _stream_idle_preview_with_picamera2(
         raise RuntimeError(f"Picamera2 idle preview failed: {exc}") from exc
     finally:
         _close_picamera2(picamera2)
+        socket.close(0)
+        context.term()
 
 
 def _resolve_picamera_size(
