@@ -1,0 +1,283 @@
+{
+  "session_id": "sess_000080",
+  "frame_id": "3",
+  "device_id": 2,
+  "filename": "camera_frame_3.jpg",
+  "timestamp": 1781097686.0633428,
+  "message_type": "frame_stream_camera",
+  "pose_output_path": "D:\\TaiLieuNam3_DUT\\HKII\\PBL5\\PBL5\\backend\\workers\\results\\sess_000080\\frame_3_pose.jpg",
+  "success": true,
+  "num_detections": 1,
+  "inference_result": {
+    "success": true,
+    "num_detections": 1,
+    "output_path": "D:\\TaiLieuNam3_DUT\\HKII\\PBL5\\PBL5\\backend\\workers\\results\\sess_000080\\frame_3_pose.jpg",
+    "image_size": {
+      "width": 640,
+      "height": 480
+    },
+    "skeleton_edges": [
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        1,
+        3
+      ],
+      [
+        2,
+        4
+      ],
+      [
+        5,
+        6
+      ],
+      [
+        5,
+        7
+      ],
+      [
+        7,
+        9
+      ],
+      [
+        6,
+        8
+      ],
+      [
+        8,
+        10
+      ],
+      [
+        5,
+        11
+      ],
+      [
+        6,
+        12
+      ],
+      [
+        11,
+        12
+      ],
+      [
+        11,
+        13
+      ],
+      [
+        13,
+        15
+      ],
+      [
+        12,
+        14
+      ],
+      [
+        14,
+        16
+      ]
+    ],
+    "detections": [
+      {
+        "bbox": {
+          "x1": 13.103,
+          "y1": 2.293,
+          "x2": 637.496,
+          "y2": 479.33,
+          "score": 0.6666
+        },
+        "bbox_normalized": {
+          "x1": 0.020474,
+          "y1": 0.004778,
+          "x2": 0.996087,
+          "y2": 0.998605
+        },
+        "keypoints": [
+          [
+            410.665,
+            204.226
+          ],
+          [
+            394.405,
+            163.576
+          ],
+          [
+            329.364,
+            171.706
+          ],
+          [
+            443.186,
+            253.007
+          ],
+          [
+            191.153,
+            261.137
+          ],
+          [
+            483.836,
+            464.39
+          ],
+          [
+            215.543,
+            472.52
+          ],
+          [
+            605.788,
+            456.26
+          ],
+          [
+            -16.165,
+            744.879
+          ],
+          [
+            589.528,
+            456.26
+          ],
+          [
+            524.487,
+            439.999
+          ],
+          [
+            402.535,
+            456.26
+          ],
+          [
+            97.656,
+            744.879
+          ],
+          [
+            581.398,
+            407.479
+          ],
+          [
+            264.324,
+            480.65
+          ],
+          [
+            597.658,
+            431.869
+          ],
+          [
+            256.193,
+            456.26
+          ]
+        ],
+        "keypoints_normalized": [
+          [
+            0.641665,
+            0.425471
+          ],
+          [
+            0.616258,
+            0.340783
+          ],
+          [
+            0.514632,
+            0.357721
+          ],
+          [
+            0.692478,
+            0.527098
+          ],
+          [
+            0.298676,
+            0.544036
+          ],
+          [
+            0.755995,
+            0.967479
+          ],
+          [
+            0.336786,
+            0.984417
+          ],
+          [
+            0.946544,
+            0.950541
+          ],
+          [
+            -0.025258,
+            1.55183
+          ],
+          [
+            0.921137,
+            0.950541
+          ],
+          [
+            0.819511,
+            0.916666
+          ],
+          [
+            0.628962,
+            0.950541
+          ],
+          [
+            0.152588,
+            1.55183
+          ],
+          [
+            0.908434,
+            0.848915
+          ],
+          [
+            0.413006,
+            1.001354
+          ],
+          [
+            0.933841,
+            0.899728
+          ],
+          [
+            0.400302,
+            0.950541
+          ]
+        ],
+        "keypoint_scores": [
+          0.868571,
+          0.79966,
+          0.912232,
+          0.140141,
+          0.916828,
+          0.483035,
+          0.142284,
+          0.161507,
+          0.039485,
+          0.588374,
+          0.066482,
+          0.025025,
+          0.015113,
+          0.023093,
+          0.024302,
+          0.053487,
+          0.170364
+        ],
+        "angles": null,
+        "form_status": "UNKNOWN",
+        "form_feedback": "Move back - full body required",
+        "side_used": null,
+        "valid_pose": false
+      }
+    ],
+    "form_tracking": {
+      "rep_count": 0,
+      "stage": null,
+      "status": "UNKNOWN",
+      "message": "Move back - full body required",
+      "knee_angle": null,
+      "hip_angle": null,
+      "knee_min": null,
+      "hip_min": null,
+      "standing_knee": null,
+      "side_used": null,
+      "valid_pose": false,
+      "rep_completed": false,
+      "last_rep_summary": null
+    },
+    "primary_detection_index": 0
+  }
+}

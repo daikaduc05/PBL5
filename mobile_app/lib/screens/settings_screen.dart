@@ -63,11 +63,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return value.isEmpty ? 'Not configured' : value;
   }
 
-  String get _durationValue {
-    return _defaultMode == CaptureMode.image
-        ? 'Single frame'
-        : '${_defaultDuration}s clip';
-  }
+
 
   Future<void> _loadSettings() async {
     final settings = await _poseService.getSettings();
@@ -81,7 +77,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     setState(() {
       _defaultMode = settings.defaultMode;
-      _defaultDuration = settings.defaultDurationSeconds;
       _autoUpload = settings.autoUpload;
       _isLoading = false;
     });
@@ -99,7 +94,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         raspberryPiIp: _raspberryPiController.text.trim(),
         serverAddress: _serverController.text.trim(),
         defaultMode: _defaultMode,
-        defaultDurationSeconds: _defaultDuration,
+        defaultDurationSeconds: 0,
         autoUpload: _autoUpload,
       ),
     );
@@ -203,21 +198,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   raspberryPiController: _raspberryPiController,
                   serverController: _serverController,
                   defaultMode: _defaultMode,
-                  defaultDuration: _defaultDuration,
                   autoUpload: _autoUpload,
                   piValue: _piValue,
                   serverValue: _serverValue,
-                  durationValue: _durationValue,
                   syncColor: syncColor,
                   isSaving: _isSaving,
                   onModeSelected: (value) {
                     setState(() {
                       _defaultMode = value;
-                    });
-                  },
-                  onDurationSelected: (value) {
-                    setState(() {
-                      _defaultDuration = value;
                     });
                   },
                   onAutoUploadChanged: (value) {
@@ -240,15 +228,12 @@ class _LoadedSettingsView extends StatelessWidget {
   final TextEditingController raspberryPiController;
   final TextEditingController serverController;
   final CaptureMode defaultMode;
-  final int defaultDuration;
   final bool autoUpload;
   final String piValue;
   final String serverValue;
-  final String durationValue;
   final Color syncColor;
   final bool isSaving;
   final ValueChanged<CaptureMode> onModeSelected;
-  final ValueChanged<int> onDurationSelected;
   final ValueChanged<bool> onAutoUploadChanged;
   final VoidCallback onSave;
   final VoidCallback onBackHome;
@@ -257,15 +242,12 @@ class _LoadedSettingsView extends StatelessWidget {
     required this.raspberryPiController,
     required this.serverController,
     required this.defaultMode,
-    required this.defaultDuration,
     required this.autoUpload,
     required this.piValue,
     required this.serverValue,
-    required this.durationValue,
     required this.syncColor,
     required this.isSaving,
     required this.onModeSelected,
-    required this.onDurationSelected,
     required this.onAutoUploadChanged,
     required this.onSave,
     required this.onBackHome,
@@ -353,7 +335,6 @@ class _LoadedSettingsView extends StatelessWidget {
 
               final profileCard = _ProfileCard(
                 defaultMode: defaultMode,
-                durationValue: durationValue,
                 autoUpload: autoUpload,
                 syncColor: syncColor,
               );
@@ -482,15 +463,6 @@ class _LoadedSettingsView extends StatelessWidget {
                           accent: AppColors.primary,
                         ),
                       ),
-                      SizedBox(
-                        width: itemWidth,
-                        child: _MetricTile(
-                          label: 'Recording Duration',
-                          value: durationValue,
-                          icon: Icons.timer_rounded,
-                          accent: AppColors.accentSoft,
-                        ),
-                      ),
                     ],
                   );
                 },
@@ -528,35 +500,6 @@ class _LoadedSettingsView extends StatelessWidget {
                     onSelected: onModeSelected,
                   ),
                 ],
-              ),
-              const SizedBox(height: 18),
-              Text(
-                'Recording Duration',
-                style: AppTypography.h3.copyWith(fontSize: 18),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'This clip length is applied whenever video capture is selected.',
-                style: AppTypography.bodyMedium.copyWith(
-                  fontSize: 14,
-                  height: 1.25,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [5, 10, 15]
-                    .map(
-                      (duration) => OptionChip<int>(
-                        value: duration,
-                        selectedValue: defaultDuration,
-                        label: '${duration}s',
-                        icon: Icons.timer_rounded,
-                        onSelected: onDurationSelected,
-                      ),
-                    )
-                    .toList(),
               ),
             ],
           ),
@@ -733,13 +676,11 @@ class _SectionHeader extends StatelessWidget {
 
 class _ProfileCard extends StatelessWidget {
   final CaptureMode defaultMode;
-  final String durationValue;
   final bool autoUpload;
   final Color syncColor;
 
   const _ProfileCard({
     required this.defaultMode,
-    required this.durationValue,
     required this.autoUpload,
     required this.syncColor,
   });
@@ -801,14 +742,6 @@ class _ProfileCard extends StatelessWidget {
             style: AppTypography.h3.copyWith(fontSize: 18),
           ),
           const SizedBox(height: 12),
-          _MetricTile(
-            label: 'Length',
-            value: durationValue,
-            icon: Icons.timer_rounded,
-            accent: AppColors.accentSoft,
-            compact: true,
-          ),
-          const SizedBox(height: 8),
           _MetricTile(
             label: 'Upload',
             value: autoUpload ? 'Enabled' : 'Manual',

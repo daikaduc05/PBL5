@@ -112,9 +112,22 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await manager.connect(websocket, session_id)
     try:
         while True:
-            # We don't expect messages from the client, but we must keep the connection alive
-            await websocket.receive_text()
+            try:
+                # Wait for any message from the client with a 20-second timeout.
+                # Client is not expected to send messages – the timeout triggers a
+                # server-side keepalive ping so NAT/proxy idle timeouts are avoided.
+                data = await asyncio.wait_for(websocket.receive(), timeout=20)
+                if data.get("type") == "websocket.disconnect":
+                    break
+                # Ignore any other messages the client might send (e.g. pings)
+            except asyncio.TimeoutError:
+                # Send a lightweight keepalive so the connection stays alive
+                await websocket.send_text('{"type":"ping"}')
     except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
         manager.disconnect(websocket, session_id)
 
 

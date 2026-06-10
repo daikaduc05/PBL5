@@ -173,7 +173,7 @@ def capture_video_to_zmq(
     host: str,
     port: int,
     session_id: str,
-    duration_seconds: float,
+    duration_seconds: float | None,
     device_id: int | None = None,
     camera_index: int = 0,
     width: int | None = None,
@@ -214,7 +214,8 @@ def capture_video_to_zmq(
     )
     socket, context = _open_push_socket(host, port)
     frame_interval_seconds = 1.0 / max(fps, 1.0)
-    deadline = time.monotonic() + max(duration_seconds, 1.0)
+    # None means open-ended — loop until stop_event fires
+    deadline = None if duration_seconds is None else time.monotonic() + max(duration_seconds, 1.0)
     frame_id = 0
     read_failures = 0
     preview_sent_at: float | None = None
@@ -222,7 +223,7 @@ def capture_video_to_zmq(
     try:
         _warm_up_camera(camera, warmup_seconds)
 
-        while time.monotonic() < deadline:
+        while deadline is None or time.monotonic() < deadline:
             if stop_event is not None and stop_event.is_set():
                 _log(logger, "Live capture stopped by stop event.")
                 break
@@ -597,7 +598,7 @@ def _capture_video_with_picamera2_to_zmq(
     host: str,
     port: int,
     session_id: str,
-    duration_seconds: float,
+    duration_seconds: float | None,
     device_id: int | None,
     camera_index: int,
     width: int | None,
@@ -611,7 +612,8 @@ def _capture_video_with_picamera2_to_zmq(
     socket, context = _open_push_socket(host, port)
     picamera2 = None
     frame_interval_seconds = 1.0 / max(fps, 1.0)
-    deadline = time.monotonic() + max(duration_seconds, 1.0)
+    # None means open-ended — loop until stop_event fires
+    deadline = None if duration_seconds is None else time.monotonic() + max(duration_seconds, 1.0)
     frame_id = 0
     preview_sent_at: float | None = None
 
@@ -634,7 +636,7 @@ def _capture_video_with_picamera2_to_zmq(
         picamera2.start()
         time.sleep(max(warmup_seconds, 1.0))
 
-        while time.monotonic() < deadline:
+        while deadline is None or time.monotonic() < deadline:
             if stop_event is not None and stop_event.is_set():
                 _log(logger, "Picamera2 live capture stopped by stop event.")
                 break

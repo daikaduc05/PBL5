@@ -149,7 +149,12 @@ def _resolve_capture_source(payload: dict[str, Any], frames_dir: str | None) -> 
     return "camera"
 
 
-def _resolve_capture_duration_seconds(payload: dict[str, Any]) -> float:
+def _resolve_capture_duration_seconds(payload: dict[str, Any]) -> float | None:
+    """Return the capture duration in seconds, or None for open-ended recording.
+
+    A value of 0 (or missing) means the mobile app will send a stop_recording
+    command to terminate the capture — no automatic timer is applied.
+    """
     for key in ("actual_duration_seconds", "target_duration_seconds", "duration_seconds"):
         value = payload.get(key)
         try:
@@ -159,7 +164,8 @@ def _resolve_capture_duration_seconds(payload: dict[str, Any]) -> float:
         if duration > 0:
             return duration
 
-    return 5.0
+    # 0 or missing → open-ended, caller drives stop via stop_event
+    return None
 
 
 def _resolve_int(payload: dict[str, Any], key: str, default: int | None = None) -> int | None:
@@ -347,6 +353,10 @@ def _run_capture_job(
                 )
         else:
             duration_seconds = _resolve_capture_duration_seconds(payload)
+            if duration_seconds is None:
+                log(f"start_recording {session_key}: open-ended recording — waiting for stop_recording command.")
+            else:
+                log(f"start_recording {session_key}: fixed duration={duration_seconds}s.")
             if capture_source == "replay":
                 sent_frames = replay_frames_to_zmq(
                     frames_dir=frames_dir_value or "",

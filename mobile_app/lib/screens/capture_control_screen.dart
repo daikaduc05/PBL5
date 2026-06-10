@@ -56,6 +56,8 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
   FrameResultDetail? _latestInferenceDetail;
   PreviewFrameMetadata? _latestPreviewFrameMetadata;
   String? _liveInferenceMessage;
+  DateTime? _latestInferenceReceivedAt;
+  static const Duration _inferenceStaleThreshold = Duration(seconds: 5);
 
   @override
   void initState() {
@@ -177,14 +179,6 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
         return;
       }
 
-      if (nextElapsed.inSeconds >= _selectedDurationSeconds) {
-        setState(() {
-          _elapsed = Duration(seconds: _selectedDurationSeconds);
-        });
-        _stopRecording(autoTriggered: true);
-        return;
-      }
-
       setState(() {
         _elapsed = nextElapsed;
       });
@@ -198,6 +192,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
         if (!mounted) return;
         setState(() {
           _latestInferenceDetail = detail;
+          _latestInferenceReceivedAt = DateTime.now();
           _liveInferenceMessage = detail.formTracking != null
               ? 'Frame ${detail.frameId}: ${detail.formTracking!.status} - ${detail.formTracking!.message}'
               : detail.poseOverlay?.hasDetections == true
@@ -224,6 +219,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
         if (!mounted || _isRecording) return;
         setState(() {
           _latestInferenceDetail = detail;
+          _latestInferenceReceivedAt = DateTime.now();
           _liveInferenceMessage = detail.formTracking != null
               ? 'Idle Frame ${detail.frameId}: ${detail.formTracking!.status} - ${detail.formTracking!.message}'
               : detail.poseOverlay?.hasDetections == true
@@ -259,7 +255,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
     try {
       final draft = await _createBackendCaptureDraft(
         mode: CaptureMode.video,
-        targetDurationSeconds: _selectedDurationSeconds,
+        targetDurationSeconds: 0,
         actualDurationSeconds: 0,
       );
 
@@ -685,6 +681,14 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
       return false;
     }
 
+    // Guard: nếu không nhận được frame mới từ backend trong _inferenceStaleThreshold
+    // thì overlay đó là stale (backend đã tắt hoặc mất kết nối) → không render.
+    final receivedAt = _latestInferenceReceivedAt;
+    if (receivedAt == null ||
+        DateTime.now().difference(receivedAt) > _inferenceStaleThreshold) {
+      return false;
+    }
+
     final overlay = detail.poseOverlay;
     if (overlay == null || !overlay.hasDetections) {
       return false;
@@ -711,7 +715,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
       return false;
     }
 
-    final maxDiff = previewMetadata.mode == 'idle_preview' ? 5 : 1;
+    final maxDiff = previewMetadata.mode == 'idle_preview' ? 60 : 2;
     return (previewFrameId - detail.frameId).abs() <= maxDiff;
   }
 
@@ -853,13 +857,6 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
                           label: 'Server',
                           value: _pipelineReady ? 'Command Ready' : 'Check API',
                         ),
-                        _InfoTag(
-                          icon: Icons.schedule_rounded,
-                          label: 'Duration',
-                          value: _selectedMode == CaptureMode.image
-                              ? 'Single frame'
-                              : '${_selectedDurationSeconds}s',
-                        ),
                       ],
                     ),
                   ],
@@ -922,35 +919,6 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
                           onSelected: _selectMode,
                         ),
                       ],
-                    ),
-                    const SizedBox(height: 18),
-                    Text(
-                      'Recording Duration',
-                      style: AppTypography.h3.copyWith(fontSize: 18),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Select the motion clip length used for the demo capture workflow.',
-                      style: AppTypography.bodyMedium.copyWith(
-                        fontSize: 14,
-                        height: 1.25,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: [5, 10, 15]
-                          .map(
-                            (duration) => OptionChip<int>(
-                              value: duration,
-                              selectedValue: _selectedDurationSeconds,
-                              label: '${duration}s',
-                              icon: Icons.timer_rounded,
-                              onSelected: _selectDuration,
-                            ),
-                          )
-                          .toList(),
                     ),
                   ],
                 ),
