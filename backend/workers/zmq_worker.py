@@ -2,9 +2,12 @@
 
 import json
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
+import cv2
+import numpy as np
 import zmq
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -149,15 +152,17 @@ def save_result_json(result_payload: dict, result_json_path: Path) -> None:
         print(f"[ZMQ Worker] Error writing result JSON file: {exc}")
 
 
-def run_pose_for_saved_frame(input_path: Path, session_id: str, frame_id: str, metadata: dict) -> None:
-    """Run pose inference for a saved frame without interrupting the worker loop."""
-    results_dir = WORKER_DIR / "results" / session_id
-    results_dir.mkdir(parents=True, exist_ok=True)
-    result_path = results_dir / f"frame_{frame_id}_pose.jpg"
-    result_json_path = results_dir / f"frame_{frame_id}_result.json"
-
-    print(f"[ZMQ Worker] Pose input frame path: {input_path}")
-    print(f"[ZMQ Worker] Pose output result path: {result_path}")
+def run_pose_for_frame(image_array: np.ndarray, session_id: str, frame_id: str, metadata: dict, push_socket: zmq.Socket) -> None:
+    """Run pose inference for a frame in-memory and push result via ZMQ."""
+    if session_id != "idle_preview":
+        results_dir = WORKER_DIR / "results" / session_id
+        results_dir.mkdir(parents=True, exist_ok=True)
+        result_path = results_dir / f"frame_{frame_id}_pose.jpg"
+        result_json_path = results_dir / f"frame_{frame_id}_result.json"
+        print(f"[ZMQ Worker] Pose output result path: {result_path}")
+    else:
+        result_path = None
+        result_json_path = None
 
     result = {
         "success": False,
@@ -167,7 +172,7 @@ def run_pose_for_saved_frame(input_path: Path, session_id: str, frame_id: str, m
 
     try:
         pose_inference_runner = get_pose_inference_runner()
-        result = pose_inference_runner(str(input_path), str(result_path))
+        result = pose_inference_runner(image_array, str(result_path) if result_path else None)
         result = enrich_result_with_form_tracking(session_id, result)
         print(f"[ZMQ Worker] Pose inference result: {result}")
         if not result.get("success", False):
@@ -183,13 +188,21 @@ def run_pose_for_saved_frame(input_path: Path, session_id: str, frame_id: str, m
         "filename": metadata.get("filename"),
         "timestamp": metadata.get("timestamp"),
         "message_type": metadata.get("message_type"),
-        "input_path": str(input_path),
-        "pose_output_path": str(result_path),
+        "pose_output_path": str(result_path) if result_path else None,
         "success": result.get("success", False),
         "num_detections": result.get("num_detections", 0),
         "inference_result": result,
     }
-    save_result_json(result_payload, result_json_path)
+    
+    # Async save to disk
+    if result_json_path is not None:
+        threading.Thread(target=save_result_json, args=(result_payload, result_json_path), daemon=True).start()
+
+    # Push to ZMQ
+    try:
+        push_socket.send_string(json.dumps(result_payload))
+    except Exception as e:
+        print(f"[ZMQ Worker] Error pushing result: {e}")
 
 
 def main() -> None:
@@ -197,6 +210,9 @@ def main() -> None:
     context = zmq.Context()
     socket = context.socket(zmq.PULL)
     socket.bind("tcp://*:5555")
+
+    push_socket = context.socket(zmq.PUB)
+    push_socket.bind("tcp://127.0.0.1:5556")
 
     print("[ZMQ Worker] Started and listening on tcp://*:5555")
 
@@ -230,19 +246,30 @@ def main() -> None:
                     print(f"[ZMQ Worker] image byte length: {len(image_bytes)}")
 
                     try:
-                        # Group received frames by session to mirror backend storage.
-                        output_dir = WORKER_DIR / "output" / session_id
-                        output_dir.mkdir(parents=True, exist_ok=True)
-                        output_path = output_dir / f"frame_{frame_id}.jpg"
-                        output_path.write_bytes(image_bytes)
-                        print(f"[ZMQ Worker] Output directory: {output_dir}")
-                        print(f"[ZMQ Worker] Output path: {output_path}")
+                        # Decode image in memory
+                        image_array = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+                        if image_array is None:
+                            print("[ZMQ Worker] Error: Could not decode image bytes.")
+                            continue
+
+                        if session_id != "idle_preview":
+                            # Group received frames by session to mirror backend storage.
+                            output_dir = WORKER_DIR / "output" / session_id
+                            output_dir.mkdir(parents=True, exist_ok=True)
+                            output_path = output_dir / f"frame_{frame_id}.jpg"
+                            
+                            # Async write original frame to disk
+                            threading.Thread(target=lambda p=output_path, b=image_bytes: p.write_bytes(b), daemon=True).start()
+
+                            print(f"[ZMQ Worker] Output directory: {output_dir}")
+                            print(f"[ZMQ Worker] Output path: {output_path} (async)")
                         print(f"[ZMQ Worker] Saved session_id: {session_id}")
                         print(f"[ZMQ Worker] Saved frame_id: {frame_id}")
                         print(f"[ZMQ Worker] Saved bytes length: {len(image_bytes)}")
-                        run_pose_for_saved_frame(output_path, session_id, frame_id, metadata)
-                    except OSError as exc:
-                        print(f"[ZMQ Worker] Error writing image file: {exc}")
+                        
+                        run_pose_for_frame(image_array, session_id, frame_id, metadata, push_socket)
+                    except Exception as exc:
+                        print(f"[ZMQ Worker] Error processing image: {exc}")
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                     print(f"[ZMQ Worker] Error parsing metadata JSON: {exc}")
             except Exception as exc:

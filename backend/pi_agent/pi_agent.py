@@ -237,14 +237,19 @@ def _clear_idle_preview(thread: threading.Thread) -> None:
             _IDLE_PREVIEW = None
 
 
-def _run_idle_preview_loop() -> None:
+def _run_idle_preview_loop(backend: str) -> None:
     current_thread = threading.current_thread()
     idle_preview = _get_idle_preview()
     if idle_preview is None:
         return
 
+    from urllib.parse import urlparse
+    zmq_host = urlparse(backend).hostname or "127.0.0.1"
+
     try:
         stream_idle_preview(
+            zmq_host=zmq_host,
+            zmq_port=5555,
             camera_index=DEFAULT_CAMERA_INDEX,
             width=DEFAULT_IDLE_PREVIEW_WIDTH,
             height=DEFAULT_IDLE_PREVIEW_HEIGHT,
@@ -259,7 +264,7 @@ def _run_idle_preview_loop() -> None:
         _clear_idle_preview(current_thread)
 
 
-def _ensure_idle_preview_running() -> None:
+def _ensure_idle_preview_running(backend: str) -> None:
     if not _PREVIEW_ENABLED:
         return
 
@@ -269,6 +274,7 @@ def _ensure_idle_preview_running() -> None:
     stop_event = threading.Event()
     idle_thread = threading.Thread(
         target=_run_idle_preview_loop,
+        args=(backend,),
         daemon=True,
         name="posetrack-idle-preview",
     )
@@ -378,7 +384,7 @@ def _run_capture_job(
             log(f"[ERROR] Failed to update command {command_id} to failed: {update_exc}")
     finally:
         _clear_active_capture(command_id)
-        _ensure_idle_preview_running()
+        _ensure_idle_preview_running(backend)
 
 
 def _start_capture_command(command: dict[str, Any], backend: str, device_id: int) -> None:
@@ -456,7 +462,7 @@ def handle_command(command: dict[str, Any], backend: str, device_id: int) -> Non
 def run(backend: str, device_id: int) -> None:
     log(f"Agent started with backend={backend}, device_id={device_id}")
     log("Press Ctrl+C to stop.")
-    _ensure_idle_preview_running()
+    _ensure_idle_preview_running(backend)
 
     while True:
         try:

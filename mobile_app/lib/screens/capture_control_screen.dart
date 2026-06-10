@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
@@ -17,6 +17,7 @@ import '../models/result_models.dart';
 import '../navigation/app_routes.dart';
 import '../services/api_service.dart';
 import '../services/mock_pose_tracking_service.dart';
+import '../services/realtime_ws_service.dart';
 import '../services/result_api.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_typography.dart';
@@ -47,7 +48,9 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
   String? _raspberryPiIp;
   CaptureSessionDraft? _activeRecordingDraft;
   Timer? _timer;
-  Timer? _liveInferenceTimer;
+  final RealtimeWsService _realtimeService = RealtimeWsService();
+  StreamSubscription<FrameResultDetail>? _realtimeSubscription;
+  StreamSubscription<FrameResultDetail>? _idleSubscription;
   ResultSessionDetail? _liveResultSession;
   ResultFrameItem? _latestInferenceFrame;
   FrameResultDetail? _latestInferenceDetail;
@@ -58,12 +61,15 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
   void initState() {
     super.initState();
     _loadConfiguration();
+    _startIdleInferencePolling();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
-    _liveInferenceTimer?.cancel();
+    _realtimeSubscription?.cancel();
+    _idleSubscription?.cancel();
+    _realtimeService.disconnect();
     super.dispose();
   }
 
@@ -186,86 +192,54 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
   }
 
   void _startInferencePolling(CaptureSessionDraft draft) {
-    _liveInferenceTimer?.cancel();
-    _pollLiveInference(draft);
-    _liveInferenceTimer = Timer.periodic(const Duration(milliseconds: 450), (timer) {
-      _pollLiveInference(draft);
-    });
+    _realtimeSubscription?.cancel();
+    _realtimeSubscription = _realtimeService.subscribe(draft.sessionId).listen(
+      (detail) {
+        if (!mounted) return;
+        setState(() {
+          _latestInferenceDetail = detail;
+          _liveInferenceMessage = detail.formTracking != null
+              ? 'Frame ${detail.frameId}: ${detail.formTracking!.status} - ${detail.formTracking!.message}'
+              : detail.poseOverlay?.hasDetections == true
+                  ? 'Frame ${detail.frameId}: ${detail.poseOverlay!.detections.length} pose detection(s) live.'
+                  : 'Frame ${detail.frameId} is ready.';
+        });
+      },
+      onError: (error) {
+        print('Realtime WS Stream Error: $error');
+      },
+    );
   }
 
   void _stopInferencePolling() {
-    _liveInferenceTimer?.cancel();
-    _liveInferenceTimer = null;
+    _realtimeSubscription?.cancel();
+    _realtimeSubscription = null;
+    _realtimeService.disconnect();
   }
 
-  Future<void> _pollLiveInference(CaptureSessionDraft draft) async {
-    try {
-      final session = await _resultApi.getResultSessionDetail(draft.sessionId);
-      if (!mounted) {
-        return;
-      }
-
-      final latestFrameId = session.latestResultFrameId ?? session.latestFrameId;
-      final latestFrame = latestFrameId == null ? null : session.findFrame(latestFrameId);
-      FrameResultDetail? latestDetail = _latestInferenceDetail;
-
-      if (latestFrame?.hasResultJson == true) {
-        final shouldRefreshDetail = latestDetail == null ||
-            latestDetail.sessionId != draft.sessionId ||
-            latestDetail.frameId != latestFrame!.frameId;
-
-        if (shouldRefreshDetail) {
-          try {
-            latestDetail = await _resultApi.getFrameResult(
-              draft.sessionId,
-              latestFrame!.frameId,
-            );
-            if (!mounted) {
-              return;
-            }
-          } on ResultApiException {
-            latestDetail = null;
-          }
-        }
-      } else {
-        latestDetail = null;
-      }
-
-      final liveInferenceMessage = latestFrame == null
-          ? 'Frames are still reaching the worker.'
-          : latestDetail?.formTracking != null
-              ? 'Frame ${latestFrame.frameId}: ${latestDetail!.formTracking!.status} - ${latestDetail.formTracking!.message}'
-              : latestDetail?.poseOverlay?.hasDetections == true
-                  ? 'Frame ${latestFrame.frameId}: ${latestDetail!.poseOverlay!.detections.length} pose detection(s) live.'
-                  : latestFrame.hasResultJson
-                      ? 'Frame ${latestFrame.frameId} is ready, but no pose was detected.'
-                      : 'Latest frame ${latestFrame.frameId} reached the backend. Waiting for JSON.';
-
-      setState(() {
-        _liveResultSession = session;
-        _latestInferenceFrame = latestFrame?.hasPoseImage == true ? latestFrame : null;
-        _latestInferenceDetail = latestDetail;
-        _liveInferenceMessage = liveInferenceMessage;
-      });
-    } on ResultApiException catch (error) {
-      if (!mounted) {
-        return;
-      }
-
-      if (error.message.contains('not found') || error.message.contains('HTTP 404')) {
+  void _startIdleInferencePolling() {
+    _idleSubscription?.cancel();
+    _idleSubscription = _realtimeService.subscribe('idle_preview').listen(
+      (detail) {
+        if (!mounted || _isRecording) return;
         setState(() {
-          _liveResultSession = null;
-          _latestInferenceFrame = null;
-          _latestInferenceDetail = null;
-          _liveInferenceMessage = 'Waiting for the first processed frame...';
+          _latestInferenceDetail = detail;
+          _liveInferenceMessage = detail.formTracking != null
+              ? 'Idle Frame ${detail.frameId}: ${detail.formTracking!.status} - ${detail.formTracking!.message}'
+              : detail.poseOverlay?.hasDetections == true
+                  ? 'Idle Frame ${detail.frameId}: ${detail.poseOverlay!.detections.length} pose detection(s) live.'
+                  : 'Idle Frame ${detail.frameId} is ready.';
         });
-        return;
-      }
+      },
+      onError: (error) {
+        print('Realtime Idle WS Stream Error: $error');
+      },
+    );
+  }
 
-      setState(() {
-        _liveInferenceMessage = error.message;
-      });
-    }
+  void _stopIdleInferencePolling() {
+    _idleSubscription?.cancel();
+    _idleSubscription = null;
   }
 
   Future<void> _startRecording() async {
@@ -303,6 +277,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
         _latestPreviewFrameMetadata = null;
         _liveInferenceMessage = 'Waiting for the worker to produce the first inference frame...';
       });
+      _stopIdleInferencePolling();
       _startRecordingTimer();
       _startInferencePolling(draft);
 
@@ -380,6 +355,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
         _latestInferenceDetail = null;
         _latestPreviewFrameMetadata = null;
       });
+      _startIdleInferencePolling();
 
       if (!autoTriggered) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -630,7 +606,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
 
   Widget _buildCapturePreviewContent() {
     final raspberryPiIp = _raspberryPiIp?.trim();
-    final livePoseDetail = _isRecording ? _latestInferenceDetail : null;
+    final livePoseDetail = _latestInferenceDetail;
     final shouldRenderLiveOverlay = _shouldRenderLivePoseOverlay(livePoseDetail);
     final overlayMessage = _buildLiveOverlayMessage(livePoseDetail);
 
@@ -691,11 +667,6 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
       return;
     }
 
-    if (!_isRecording) {
-      _latestPreviewFrameMetadata = metadata;
-      return;
-    }
-
     final current = _latestPreviewFrameMetadata;
     final isSameMetadata = current?.frameId == metadata?.frameId &&
         current?.sessionId == metadata?.sessionId &&
@@ -710,7 +681,7 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
   }
 
   bool _shouldRenderLivePoseOverlay(FrameResultDetail? detail) {
-    if (!_isRecording || detail == null) {
+    if (detail == null) {
       return false;
     }
 
@@ -720,7 +691,14 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
     }
 
     final previewMetadata = _latestPreviewFrameMetadata;
-    if (previewMetadata == null || !previewMetadata.isRecordingPreview) {
+    if (previewMetadata == null) {
+      return false;
+    }
+
+    if (_isRecording && !previewMetadata.isRecordingPreview) {
+      return false;
+    }
+    if (!_isRecording && previewMetadata.mode != 'idle_preview') {
       return false;
     }
 
@@ -733,7 +711,8 @@ class _CaptureControlScreenState extends State<CaptureControlScreen> {
       return false;
     }
 
-    return (previewFrameId - detail.frameId).abs() <= 1;
+    final maxDiff = previewMetadata.mode == 'idle_preview' ? 5 : 1;
+    return (previewFrameId - detail.frameId).abs() <= maxDiff;
   }
 
   String? _buildLiveOverlayMessage(FrameResultDetail? detail) {
